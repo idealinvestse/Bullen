@@ -1,0 +1,13 @@
+# Bullen configuration (defaults can be overridden here)
+samplerate: 48000
+frames_per_period: 128
+nperiods: 2
+inputs: 6
+outputs: 2
+record: true
+recordings_dir: recordings
+auto_connect_capture: true
+auto_connect_playback: true
+capture_match: capture
+playback_match: playback
+selected_channel: 1

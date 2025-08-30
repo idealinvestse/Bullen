@@ -1,0 +1,22 @@
+[Unit]
+Description=Bullen Audio Router (FastAPI + JACK)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User and WorkingDirectory to your Pi user and project path
+User=pi
+WorkingDirectory=/home/pi/Bullen
+Environment=BULLEN_CONFIG=/home/pi/Bullen/config.yaml
+# Prefer project venv if present
+Environment=PATH=/home/pi/Bullen/.venv/bin:%(PATH)s
+ExecStart=/home/pi/Bullen/.venv/bin/python3 /home/pi/Bullen/Bullen.py
+Restart=always
+RestartSec=3
+# Allow RT priority and memlock if limits are configured
+LimitRTPRIO=95
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target
