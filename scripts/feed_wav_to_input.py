@@ -20,11 +20,12 @@ from typing import Optional
 import numpy as np
 import soundfile as sf
 
+jack = None  # type: ignore
 try:
     import jack  # type: ignore
-except Exception:  # pragma: no cover
-    print("JACK library not available. Install 'JACK-Client' and run on Raspberry Pi with PipeWire-JACK.")
-    raise
+except Exception:
+    # Allow importing this module without JACK present (for tests on non-Pi).
+    jack = None  # type: ignore
 
 
 def db_to_linear(db: float) -> float:
@@ -72,6 +73,10 @@ def main() -> None:
     wav_path: Path = args.file
     if not wav_path.exists():
         print(f"File not found: {wav_path}")
+        sys.exit(1)
+
+    if jack is None:
+        print("JACK library not available. Install 'JACK-Client' and run on Raspberry Pi with PipeWire-JACK.")
         sys.exit(1)
 
     data, sr = sf.read(str(wav_path), dtype='float32', always_2d=False)

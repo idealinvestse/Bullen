@@ -222,28 +222,22 @@ def create_app(engine: Any) -> FastAPI:
             # Handle task cancellation
             pass
 
-    @app.on_event("startup")
-    async def _startup():
-        """
-        Startup event handler to start the audio engine and VU publisher task.
-        """
-        # Start audio engine
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
+        # Startup: start engine and VU publisher
         engine.start()
-        # Create and start VU publisher task
         app.state.vu_task = asyncio.create_task(_vu_publisher())
+        try:
+            yield
+        finally:
+            # Shutdown: cancel VU task and stop engine
+            if app.state.vu_task:
+                app.state.vu_task.cancel()
+                with contextlib.suppress(Exception):
+                    await app.state.vu_task
+            engine.stop()
 
-    @app.on_event("shutdown")
-    async def _shutdown():
-        """
-        Shutdown event handler to stop the VU publisher task and audio engine.
-        """
-        # Cancel VU publisher task if it exists
-        if app.state.vu_task:
-            app.state.vu_task.cancel()
-            # Suppress any exceptions during task cancellation
-            with contextlib.suppress(Exception):
-                await app.state.vu_task
-        # Stop audio engine
-        engine.stop()
+    # Use lifespan context instead of deprecated on_event hooks
+    app.router.lifespan_context = lifespan
 
     return app
