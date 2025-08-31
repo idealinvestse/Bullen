@@ -11,4 +11,3 @@ auto_connect_playback: true
 capture_match: capture
 playback_match: playback
 selected_channel: 1
-backend: jack  # 'jack' for full functionality, 'dummy' to run without JACK (UI-only, no audio)

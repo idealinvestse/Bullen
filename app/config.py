@@ -32,9 +32,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "playback_match": "playback",
     # Initially selected channel (1-based index)
     "selected_channel": 1,
-    # Audio backend selector: 'jack' (full features) or 'dummy' (no JACK; UI-only)
-    # Can be overridden with env var BULLEN_BACKEND
-    "backend": "jack",
 }
 
 
@@ -75,9 +72,5 @@ def load_config(path: str | None = None) -> Dict[str, Any]:
                 # Only update if data is a dictionary
                 if isinstance(data, dict):
                     cfg.update(data)
-    # Optional backend override from environment
-    backend_env = os.environ.get("BULLEN_BACKEND")
-    if backend_env:
-        cfg["backend"] = str(backend_env).lower()
     # Return final configuration
     return cfg

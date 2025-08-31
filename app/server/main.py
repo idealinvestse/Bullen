@@ -1,26 +1,35 @@
 import os
+from pathlib import Path
 import uvicorn
 
 from app.config import load_config
 from app.server.app import create_app
+from app.engine.audio_engine import AudioEngine as _Engine
 
 
-# Build FastAPI app with engine so uvicorn can import as 'app.server.main:app'
-# Load configuration and create audio engine based on selected backend
+def _ensure_raspberry_pi() -> None:
+    """Raise if not running on a Raspberry Pi (unless explicitly overridden)."""
+    # Allow override for development if explicitly requested
+    if os.environ.get("BULLEN_ALLOW_NON_PI") == "1":
+        return
+    model = ""
+    try:
+        model = Path("/proc/device-tree/model").read_text(errors="ignore").lower()
+    except Exception:
+        model = ""
+    if "raspberry pi" not in model:
+        raise RuntimeError(
+            "Bullen is configured to run only on Raspberry Pi. "
+            "Set BULLEN_ALLOW_NON_PI=1 to override (for development only)."
+        )
+
+
+# Build FastAPI app with JACK engine so uvicorn can import as 'app.server.main:app'
 _config = load_config()
-_backend = str(_config.get("backend", "jack")).lower()
-
-if _backend == "jack":
-    # Import JACK engine lazily to avoid requiring JACK when running dummy backend
-    from app.engine.audio_engine import AudioEngine as _Engine
-    engine = _Engine(_config)
-else:
-    # Dummy backend: no JACK dependency, UI-only
-    from app.engine.dummy_engine import DummyEngine as _Engine
-    engine = _Engine(_config)
-
-# Create FastAPI application with audio engine
+_ensure_raspberry_pi()
+engine = _Engine(_config)
 app = create_app(engine)
+
 
 # Entry point for running the server directly
 if __name__ == "__main__":

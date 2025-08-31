@@ -54,6 +54,10 @@ python3 Bullen.py
 # Öppna i webbläsare: http://<Pi-IP>:8000/  (omdirigeras till /ui)
 ```
 
+### Pi-only körning
+- Projektet är låst till Raspberry Pi. Vid start kontrolleras `/proc/device-tree/model`.
+- För utveckling utanför Pi: sätt miljövariabeln `BULLEN_ALLOW_NON_PI=1` (endast UI/API; kräver fortfarande att JACK-bibliotek finns installerat om motorn skulle initieras).
+
 ## systemd-autostart
 1) Uppdatera sökvägar i `systemd/bullen.service` om din projektmapp skiljer sig.
 2) Installera tjänsten:
@@ -93,26 +97,27 @@ auto_connect_playback: true
 capture_match: capture
 playback_match: playback
 selected_channel: 1
-backend: jack  # 'jack' (full funktion) eller 'dummy' (ingen JACK; UI-only)
 ```
-- `capture_match`/`playback_match` används för att auto-ansluta fysiska portar (PipeWire/JACK). Justera vid behov.
-
-### Backend-val (JACK vs. Dummy)
-- `backend: jack` (standard) använder JACK/PipeWire-JACK och ger full funktion:
-  - 6 in → välj 1 till L/R, gain/mute per kanal, VU (peak/RMS), inspelning per kanal.
-- `backend: dummy` kör utan JACK-server (ingen audio I/O, ingen inspelning):
-  - UI och API fungerar, VU visar 0, kontroller uppdaterar intern state men påverkar inget ljud.
-
-Sätt backend på ett av tre sätt:
-- I `config.yaml`: `backend: dummy`
-- Miljövariabel: `export BULLEN_BACKEND=dummy`
-- Installationsskript-flagga: `./scripts/install_and_start.sh --backend=dummy`
+- `capture_match`/`playback_match` används för att auto-ansluta fysiska porter (PipeWire/JACK). Justera vid behov.
 
 ## UI
 - Öppna `http://<Pi-IP>:8000/` => redirect till `/ui/`
 - Välj kanal (CH1–CH6) för monitor i headset L/R
 - Mute/Gain per kanal
 - VU-meter visar RMS med peak-markör
+
+## Testljud (WAV) och injektering via JACK
+- Skapa korta testsignaler (mono, -12 dBFS, 2 s) i `test_wavs/`:
+  ```bash
+  python3 scripts/make_test_wavs.py --seconds 2.0 --samplerate 48000
+  ```
+- Mata en testfil till vald motoringång (1–6) via JACK-klient (loop valfritt):
+  ```bash
+  python3 scripts/feed_wav_to_input.py --file test_wavs/ch1_440Hz.wav --input 1 --loop
+  ```
+  Tips:
+  - Om fysisk capture redan är auto-ansluten till `bullen:in_1` kan signalerna summeras. För ren test, koppla tillfälligt bort capture-porten i qpwgraph.
+  - Om auto-anslutning misslyckas, koppla manuellt i qpwgraph/jack_connect.
 
 ## Inspelningar
 - Skapas i `recordings/<timestamp>/channel_<N>.wav`
