@@ -118,63 +118,128 @@
     }
 
     // API helpers
+    /**
+     * Select a channel for monitoring
+     * @param {number} ch - Channel number (1-based)
+     */
     async function selectChannel(ch) {
+      // Send POST request to select channel API endpoint
       await fetch(`/api/select/${ch}`, { method: 'POST' });
+      // Update UI to highlight selected channel
       highlightSelected(ch);
     }
 
+    /**
+     * Set gain for a specific channel in decibels
+     * @param {number} ch - Channel number (1-based)
+     * @param {number} db - Gain value in decibels
+     */
     async function setGainDb(ch, db) {
+      // Send POST request to gain API endpoint with dB value
       await fetch(`/api/gain/${ch}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gain_db: db }) });
+      // Update gain display label with new value
       const el = document.getElementById(`gaindb-${ch}`); if (el) el.textContent = `${db.toFixed(1)} dB`;
     }
 
+    /**
+     * Set mute status for a specific channel
+     * @param {number} ch - Channel number (1-based)
+     * @param {boolean} on - Mute status (true for muted, false for unmuted)
+     */
     async function setMute(ch, on) {
+      // Send POST request to mute API endpoint with mute status
       await fetch(`/api/mute/${ch}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mute: on }) });
+      // Update mute button UI to reflect new status
       const btn = document.getElementById(`mute-${ch}`);
       if (btn) btn.classList.toggle('on', on);
     }
 
+    /**
+     * Highlight the selected channel in the UI
+     * @param {number} ch - Channel number (1-based)
+     */
     function highlightSelected(ch) {
+      // Update selected channel display
       selectedEl.textContent = ch;
+      // Toggle selected class on channel buttons
       for (let i = 1; i <= N; i++) {
         document.getElementById(`btn-${i}`).classList.toggle('sel', i === ch);
       }
     }
 
+    /**
+     * Convert linear value to decibels
+     * @param {number} v - Linear value
+     * @returns {number} Value in decibels
+     */
     function vToDb(v) { const eps = 1e-9; return 20 * Math.log10(Math.max(eps, v)); }
+    
+    /**
+     * Normalize dB value to range 0-1 for meter display
+     * @param {number} db - Decibel value
+     * @returns {number} Normalized value between 0 and 1
+     */
     function normFromDb(db) { const minDb = -60; const maxDb = 0; return Math.max(0, Math.min(1, (db - minDb) / (maxDb - minDb))); }
 
+    /**
+     * Update VU meter displays with new values
+     * @param {Object} vu - VU meter data object
+     */
     function updateVU(vu) {
+      // Extract VU data from payload
       const { vu_rms, vu_peak, selected_channel, mutes, gains_db } = vu;
+      // Update selected channel highlight
       highlightSelected(selected_channel);
+      // Update each channel's VU meter display
       for (let i = 1; i <= N; i++) {
         const idx = i - 1;
+        // Convert RMS and peak values to decibels
         const rmsDb = vToDb(vu_rms[idx]);
         const pkDb = vToDb(vu_peak[idx]);
+        // Get UI elements for this channel
         const bar = document.getElementById(`bar-${i}`);
         const pk = document.getElementById(`peak-${i}`);
         const muteBtn = document.getElementById(`mute-${i}`);
         const gainLabel = document.getElementById(`gaindb-${i}`);
         const gainSlider = document.getElementById(`gain-${i}`);
+        // Update meter bar width based on RMS value
         if (bar) bar.style.width = `${(normFromDb(rmsDb) * 100).toFixed(1)}%`;
+        // Update peak marker position
         if (pk) pk.style.left = `${(normFromDb(pkDb) * 100).toFixed(1)}%`;
+        // Update mute button status
         if (muteBtn) muteBtn.classList.toggle('on', !!mutes[idx]);
+        // Update gain display label
         if (gainLabel) gainLabel.textContent = `${(gains_db[idx]).toFixed(1)} dB`;
+        // Update gain slider position
         if (gainSlider) gainSlider.value = gains_db[idx];
       }
     }
 
+    /**
+     * Initialize application state by fetching current engine state
+     */
     async function initState() {
+      // Fetch current engine state from API
       const r = await fetch('/api/state');
+      // Parse JSON response
       const s = await r.json();
+      // Update VU meters with initial state
       updateVU(s);
     }
 
+    /**
+     * Connect to WebSocket for VU meter updates
+     */
     function wsConnect() {
+      // Determine WebSocket protocol based on page protocol
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      // Create WebSocket connection
       const ws = new WebSocket(`${proto}://${location.host}/ws/vu`);
+      // Send ping message every 2 seconds to keep connection alive
       ws.onopen = () => { setInterval(() => { try { ws.send('ping'); } catch(e){} }, 2000); };
+      // Handle incoming VU meter updates
       ws.onmessage = (ev) => { try { const data = JSON.parse(ev.data); updateVU(data); } catch(e){} };
+      // Reconnect if connection is closed
       ws.onclose = () => { setTimeout(wsConnect, 2000); };
     }
 

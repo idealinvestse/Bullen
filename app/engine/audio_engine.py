@@ -28,52 +28,89 @@ class AudioEngine:
     """
 
     def __init__(self, config: Dict):
+        """
+        Initialize the AudioEngine with configuration parameters.
+        
+        Args:
+            config (Dict): Configuration dictionary containing audio settings
+        """
         if jack is None:
             raise RuntimeError("JACK library not available. Install 'JACK-Client' and ensure JACK/PipeWire-JACK is running.")
 
         self.config = config
+        # Audio sample rate (informational, actual rate is set by JACK)
         self.samplerate = int(config.get('samplerate', 48000))
+        # Buffer size per period (informational, actual size is set by JACK)
         self.frames_per_period = int(config.get('frames_per_period', 128))
+        # Number of periods (informational, actual value is set by JACK)
         self.nperiods = int(config.get('nperiods', 2))
+        # Number of input channels
         self.num_inputs = int(config.get('inputs', 6))
+        # Number of output channels
         self.num_outputs = int(config.get('outputs', 2))
+        # Enable/disable recording functionality
         self.record_enabled = bool(config.get('record', True))
+        # Directory where recordings will be saved
         self.record_dir = Path(config.get('recordings_dir', 'recordings'))
+        # Enable/disable automatic connection of input ports
         self.auto_connect_capture = bool(config.get('auto_connect_capture', True))
+        # Enable/disable automatic connection of output ports
         self.auto_connect_playback = bool(config.get('auto_connect_playback', True))
+        # String to match when auto-connecting capture ports
         self.capture_match = str(config.get('capture_match', 'capture')).lower()
+        # String to match when auto-connecting playback ports
         self.playback_match = str(config.get('playback_match', 'playback')).lower()
 
+        # Create JACK client
         self.client = jack.Client('bullen', no_start_server=False)
 
         # Ports
+        # Register input ports for each channel
         self.inports = [self.client.inports.register(f'in_{i + 1}') for i in range(self.num_inputs)]
+        # Register output ports for left and right channels
         self.outports = [self.client.outports.register('out_l'), self.client.outports.register('out_r')]
 
         # State
+        # Thread lock for protecting shared state
         self._lock = threading.Lock()
+        # Currently selected channel (0-based index)
         self.selected_ch = max(0, min(self.num_inputs - 1, int(config.get('selected_channel', 1)) - 1))
+        # Gain values for each input channel
         self.gains = np.ones(self.num_inputs, dtype=np.float32)
+        # Mute status for each input channel
         self.mutes = np.zeros(self.num_inputs, dtype=bool)
 
         # VU meters (post-gain)
+        # Peak values for VU meters
         self.vu_peak = np.zeros(self.num_inputs, dtype=np.float32)
+        # RMS values for VU meters
         self.vu_rms = np.zeros(self.num_inputs, dtype=np.float32)
+        # Last time VU meters were updated
         self._last_vu_time = 0.0
 
         # Recording (raw input)
+        # Queues for each channel's recording data
         self._rec_queues: List[queue.Queue] = [queue.Queue(maxsize=16) for _ in range(self.num_inputs)]
+        # Thread objects for recording workers
         self._rec_threads: List[threading.Thread] = []
+        # Event to signal recording threads to stop
         self._rec_stop = threading.Event()
+        # Count of dropped buffers for each channel
         self._rec_drop_counts = np.zeros(self.num_inputs, dtype=np.int64)
+        # Flag indicating if recording threads have been started
         self._rec_started = False
 
         # Callback registration
+        # Register the process callback function
         self.client.set_process_callback(self._process)
 
     # --------------- Public API ---------------
 
     def start(self):
+        """
+        Start the audio engine by activating the JACK client and initializing connections and recording.
+        """
+        # Activate JACK client
         self.client.activate()
         # Auto connect ports
         if self.auto_connect_capture:
@@ -82,55 +119,120 @@ class AudioEngine:
             self._auto_connect_outputs()
 
         # Recording
+        # Start recording threads if recording is enabled
         if self.record_enabled and not self._rec_started:
             self._start_recording_threads()
 
     def stop(self):
+        """
+        Stop the audio engine by stopping recording threads and deactivating the JACK client.
+        """
         try:
+            # Stop recording threads if they were started
             if self._rec_started:
                 self._rec_stop.set()
                 for t in self._rec_threads:
                     t.join(timeout=3)
         finally:
+            # Deactivate and close JACK client
             self.client.deactivate()
             self.client.close()
 
     def set_selected_channel(self, ch_index: int):
+        """
+        Set the currently selected channel for monitoring.
+        
+        Args:
+            ch_index (int): Channel index to select (0-based)
+        """
+        # Use lock to safely update the selected channel
         with self._lock:
             self.selected_ch = max(0, min(self.num_inputs - 1, int(ch_index)))
 
     def set_gain_linear(self, ch_index: int, gain: float):
+        """
+        Set the linear gain value for a specific channel.
+        
+        Args:
+            ch_index (int): Channel index (0-based)
+            gain (float): Linear gain value (0.0 or higher)
+        """
+        # Use lock to safely update gain values
         with self._lock:
+            # Validate channel index
             if 0 <= ch_index < self.num_inputs:
+                # Ensure gain is not negative
                 self.gains[ch_index] = float(max(0.0, gain))
 
     def set_gain_db(self, ch_index: int, gain_db: float):
+        """
+        Set the gain for a specific channel in decibels.
+        
+        Args:
+            ch_index (int): Channel index (0-based)
+            gain_db (float): Gain value in decibels
+        """
+        # Convert dB gain to linear and set it
         self.set_gain_linear(ch_index, db_to_linear(gain_db))
 
     def set_mute(self, ch_index: int, mute: bool):
+        """
+        Set the mute status for a specific channel.
+        
+        Args:
+            ch_index (int): Channel index (0-based)
+            mute (bool): Mute status (True for muted, False for unmuted)
+        """
+        # Use lock to safely update mute status
         with self._lock:
+            # Validate channel index
             if 0 <= ch_index < self.num_inputs:
                 self.mutes[ch_index] = bool(mute)
 
     def get_state(self) -> Dict:
+        """
+        Get the current state of the audio engine.
+        
+        Returns:
+            Dict: Dictionary containing current engine state
+        """
+        # Use lock to safely access shared state
         with self._lock:
             return {
+                # Actual sample rate from JACK client
                 'samplerate': self.client.samplerate,
+                # Actual buffer size from JACK client
                 'frames_per_period': self.client.blocksize,
+                # Currently selected channel (1-based index)
                 'selected_channel': int(self.selected_ch + 1),
+                # Gain values in linear scale
                 'gains_linear': self.gains.tolist(),
+                # Gain values in decibels
                 'gains_db': [linear_to_db(g) for g in self.gains],
+                # Mute status for each channel
                 'mutes': self.mutes.astype(bool).tolist(),
+                # Peak values for VU meters
                 'vu_peak': self.vu_peak.tolist(),
+                # RMS values for VU meters
                 'vu_rms': self.vu_rms.tolist(),
+                # Recording status
                 'recording': bool(self.record_enabled),
+                # Count of dropped buffers for each channel
                 'rec_dropped_buffers': self._rec_drop_counts.tolist(),
             }
 
     # --------------- Internal ---------------
 
     def _process(self, frames: int):
+        """
+        JACK process callback function that handles audio routing, VU meter updates, and recording.
+        This function is called for every audio buffer period and must be non-blocking.
+        
+        Args:
+            frames (int): Number of audio frames in the buffer
+        """
         # Acquire state snapshot without blocking the RT thread long
+        # This ensures thread safety while minimizing time spent in the lock
         with self._lock:
             sel = int(self.selected_ch)
             gains = self.gains.copy()
@@ -140,90 +242,141 @@ class AudioEngine:
         # Read inputs and compute VU post-gain
         route_buf = None
         for i, inport in enumerate(self.inports):
+            # Get audio buffer from input port
             buf = inport.get_array()  # np.ndarray float32, shape (frames,)
+            # Apply gain and mute settings
             # VU uses post-gain signal
             g = 0.0 if mutes[i] else gains[i]
             post_gain = buf * g
-            # Update VU instantly; UI side may smooth
+            # Update VU meters instantly; UI side may smooth
             # Avoid heavy ops if frames is 0
             if frames > 0:
+                # Calculate peak value (maximum absolute amplitude)
                 self.vu_peak[i] = float(np.max(np.abs(post_gain)))
+                # Calculate RMS value (root mean square)
                 # RMS
                 self.vu_rms[i] = float(np.sqrt(np.mean(post_gain * post_gain)))
+            # If this is the selected channel, prepare it for routing
             if i == sel:
                 route_buf = buf if g == 0.0 else post_gain
 
+        # Route selected channel to output
         if route_buf is None:
             # Nothing selected; output silence
             for o in self.outports:
                 o.get_array()[:] = 0.0
         else:
             # Fast monitor to both L/R
+            # Copy the selected channel to both left and right outputs
             self.outports[0].get_array()[:] = route_buf
             self.outports[1].get_array()[:] = route_buf
 
         # Enqueue raw input for recording (non-blocking)
+        # Only record if recording is enabled and threads have been started
         if self.record_enabled and self._rec_started:
             for i, inport in enumerate(self.inports):
+                # Copy buffer to decouple from RT buffer
                 raw = inport.get_array().copy()  # copy to decouple from RT buffer
                 try:
+                    # Try to add buffer to recording queue
                     self._rec_queues[i].put_nowait(raw)
                 except queue.Full:
+                    # If queue is full, increment drop counter
                     self._rec_drop_counts[i] += 1
 
+        # Update last VU time
         self._last_vu_time = time.time()
 
     def _auto_connect_inputs(self):
+        """
+        Automatically connect physical capture ports to our input ports based on name matching.
+        """
         # Connect physical capture ports to our inports
+        # Get all physical output ports (these are the capture ports from audio devices)
         cap_ports = self.client.get_ports(is_output=True, is_physical=True)
         # Filter by name match
+        # Only keep ports that match our capture_match string or contain 'capture'
         cap_ports = [p for p in cap_ports if self.capture_match in p.name.lower() or 'capture' in p.name.lower()]
         # Fallback to any outputs if filter too strict
+        # If we don't have enough matching ports, get all output ports
         if len(cap_ports) < self.num_inputs:
             cap_ports = self.client.get_ports(is_output=True)
+        # Connect matching ports to our input ports
         for i in range(min(self.num_inputs, len(cap_ports))):
             try:
                 self.client.connect(cap_ports[i], self.inports[i])
             except jack.JackError:
+                # Ignore connection errors
                 pass
 
     def _auto_connect_outputs(self):
+        """
+        Automatically connect our output ports to physical playback ports based on name matching.
+        """
+        # Get all physical input ports (these are the playback ports to audio devices)
         pb_ports = self.client.get_ports(is_input=True, is_physical=True)
+        # Filter by name match
+        # Only keep ports that match our playback_match string or contain 'playback'
         pb_ports = [p for p in pb_ports if self.playback_match in p.name.lower() or 'playback' in p.name.lower()]
+        # Fallback to any inputs if filter too strict
         if len(pb_ports) < 2:
             pb_ports = self.client.get_ports(is_input=True)
         # Connect our L/R to first two playback ports
+        # Only connect if we have at least 2 playback ports
         if len(pb_ports) >= 2:
             try:
+                # Connect left output to first playback port
                 self.client.connect(self.outports[0], pb_ports[0])
+                # Connect right output to second playback port
                 self.client.connect(self.outports[1], pb_ports[1])
             except jack.JackError:
+                # Ignore connection errors
                 pass
 
     def _start_recording_threads(self):
+        """
+        Start recording threads for each input channel.
+        """
         # Create directory per run
+        # Generate timestamp for session directory
         ts = time.strftime('%Y%m%d_%H%M%S')
         session_dir = self.record_dir / ts
+        # Create session directory if it doesn't exist
         session_dir.mkdir(parents=True, exist_ok=True)
 
+        # Clear stop event and reset threads list
         self._rec_stop.clear()
         self._rec_threads = []
+        # Start a recording thread for each input channel
         for i in range(self.num_inputs):
             ch_path = session_dir / f'channel_{i + 1}.wav'
+            # Create thread for recording worker
             t = threading.Thread(target=self._rec_worker, args=(i, ch_path), daemon=True)
             self._rec_threads.append(t)
             t.start()
+        # Mark recording as started
         self._rec_started = True
 
     def _rec_worker(self, ch_index: int, path: Path):
+        """
+        Worker function for recording audio from a specific channel.
+        
+        Args:
+            ch_index (int): Channel index to record from
+            path (Path): File path to save the recording
+        """
         # Stream-write WAV with libsndfile
+        # Open SoundFile for writing with 24-bit PCM format
         with sf.SoundFile(str(path), mode='w', samplerate=self.client.samplerate, channels=1, subtype='PCM_24', format='WAV') as f:
+            # Continue recording until stop event is set
             while not self._rec_stop.is_set():
                 try:
+                    # Get audio block from recording queue with timeout
                     block = self._rec_queues[ch_index].get(timeout=0.2)
                 except queue.Empty:
+                    # If queue is empty, continue to next iteration
                     continue
-                # Ensure shape (n, 1)
+                # Ensure shape (n, 1) for proper WAV file format
                 if block.ndim == 1:
                     f.write(block.reshape(-1, 1))
                 else:
