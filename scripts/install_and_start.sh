@@ -4,6 +4,8 @@
 # Usage:
 #   ./scripts/install_and_start.sh [--apt] [--systemd] [--host=0.0.0.0] [--port=8000] [--config=path]
 #                                  [--no-start] [--service-name=bullen] [--user=pi]
+#                                  [--no-jack-start] [--jack-device=hw:0]
+#                                  [--jack-rate=48000] [--jack-frames=128] [--jack-periods=2]
 #
 # Flags:
 #   --apt          Install OS packages via apt (jack headers, sndfile, python venv/pip)
@@ -14,8 +16,24 @@
 #   --no-start     Do not start foreground app after setup
 #   --service-name Name of systemd unit (default: bullen)
 #   --user=...     User to run the systemd service as (default: current user)
+#   --no-jack-start  Do not attempt to start a JACK server (use existing or pw-jack wrapper if available)
+#   --jack-device     ALSA device for jackd (e.g., hw:0, hw:audioinjector)
+#   --jack-rate       Sample rate for jackd (default 48000)
+#   --jack-frames     Frames/period for jackd (default 128)
+#   --jack-periods    Number of periods for jackd (default 2)
 
 set -Eeuo pipefail
+
+on_error() {
+  local line="${1:-?}"
+  echo "[ERR] Script failed at line $line"
+  if [[ -f /tmp/jackd.log ]]; then
+    echo "[jackd.log] tail -n 100:"
+    tail -n 100 /tmp/jackd.log | sed 's/^/[jackd] /'
+  fi
+}
+trap 'on_error $LINENO' ERR
+trap 'echo "[INT] Interrupted"; exit 130' INT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJ_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -33,6 +51,14 @@ BULLEN_HOST="${BULLEN_HOST:-0.0.0.0}"
 BULLEN_PORT="${BULLEN_PORT:-8000}"
 BULLEN_CONFIG="${BULLEN_CONFIG:-$DEFAULT_CONFIG}"
 
+# JACK configuration defaults (can be overridden via flags or env)
+JACK_DEVICE="${JACK_DEVICE:-hw:0}"
+JACK_SR="${JACK_SR:-48000}"
+JACK_FRAMES="${JACK_FRAMES:-128}"
+JACK_PERIODS="${JACK_PERIODS:-2}"
+USE_PW_JACK=0
+NO_JACK_START=0
+
 for arg in "$@"; do
   case "$arg" in
     --apt) DO_APT=1 ;;
@@ -43,6 +69,11 @@ for arg in "$@"; do
     --host=*) BULLEN_HOST="${arg#*=}" ;;
     --port=*) BULLEN_PORT="${arg#*=}" ;;
     --config=*) BULLEN_CONFIG="${arg#*=}" ;;
+    --no-jack-start) NO_JACK_START=1 ;;
+    --jack-device=*) JACK_DEVICE="${arg#*=}" ;;
+    --jack-rate=*) JACK_SR="${arg#*=}" ;;
+    --jack-frames=*) JACK_FRAMES="${arg#*=}" ;;
+    --jack-periods=*) JACK_PERIODS="${arg#*=}" ;;
     -h|--help)
       sed -n '1,25p' "$0"; exit 0 ;;
     *) echo "Unknown option: $arg"; exit 1 ;;
@@ -57,10 +88,20 @@ install_apt() {
   local SUDO; SUDO=$(need_sudo)
   echo "[APT] Installing OS dependencies..."
   $SUDO apt-get update
-  $SUDO apt-get install -y --no-install-recommends \
-    python3 python3-venv python3-pip \
-    libjack-jackd2-dev libsndfile1-dev \
+  # Install packages individually if available to avoid failing the whole batch
+  local pkgs=(
+    python3 python3-venv python3-pip
+    libjack-jackd2-dev libsndfile1-dev
     jackd2 qjackctl
+    pipewire-audio-client-libraries libspa-0.2-jack
+  )
+  for p in "${pkgs[@]}"; do
+    if apt-cache policy "$p" 2>/dev/null | grep -q 'Candidate:'; then
+      $SUDO apt-get install -y --no-install-recommends "$p" || echo "[WARN] [APT] Package $p failed to install; continuing"
+    else
+      echo "[WARN] [APT] Package $p not available; skipping"
+    fi
+  done
 }
 
 create_venv() {
@@ -78,6 +119,105 @@ create_venv() {
 
 prep_dirs() {
   mkdir -p "$RECORDINGS_DIR"
+}
+
+# ---------- JACK detection and startup (with fallbacks) ----------
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+log_info() { echo "[INFO] $*"; }
+log_warn() { echo "[WARN] $*"; }
+log_error() { echo "[ERROR] $*"; }
+
+jack_running() {
+  if command_exists jack_lsp && jack_lsp >/dev/null 2>&1; then return 0; fi
+  return 1
+}
+
+wait_for_jack() {
+  local tries=${1:-10} delay=${2:-0.5}
+  for _ in $(seq 1 "$tries"); do
+    if jack_running; then return 0; fi
+    sleep "$delay"
+  done
+  return 1
+}
+
+pick_default_alsa_device() {
+  local dev="hw:0"
+  if command_exists aplay; then
+    local card
+    card=$(aplay -l 2>/dev/null | awk '/^card [0-9]+:/{print $2}' | sed 's/,//' | head -n1)
+    if [[ -n "$card" ]]; then dev="hw:${card}"; fi
+  fi
+  echo "$dev"
+}
+
+start_jackd_alsa() {
+  local dev="$JACK_DEVICE"
+  if [[ -z "$dev" || "$dev" == "auto" ]]; then dev="$(pick_default_alsa_device)"; fi
+  log_info "Starting jackd (ALSA) on $dev @ ${JACK_SR} Hz, frames ${JACK_FRAMES}, periods ${JACK_PERIODS}"
+  ulimit -l unlimited || true
+  nohup jackd -R -P95 -d alsa -d "$dev" -r "$JACK_SR" -p "$JACK_FRAMES" -n "$JACK_PERIODS" >/tmp/jackd.log 2>&1 &
+  sleep 0.5
+  if wait_for_jack 20 0.5; then return 0; fi
+  log_warn "jackd ALSA failed to come up; see /tmp/jackd.log"
+  return 1
+}
+
+start_jackdbus() {
+  if command_exists jack_control; then
+    log_info "Attempting to start JACK via jackdbus"
+    jack_control start || true
+    if wait_for_jack 20 0.5; then return 0; fi
+  fi
+  return 1
+}
+
+start_jackd_dummy() {
+  log_warn "Starting jackd with dummy backend as last resort"
+  nohup jackd -R -P95 -d dummy -r "$JACK_SR" -p "$JACK_FRAMES" -n "$JACK_PERIODS" >/tmp/jackd.log 2>&1 &
+  sleep 0.5
+  if wait_for_jack 10 0.5; then return 0; fi
+  return 1
+}
+
+ensure_jack_server() {
+  if [[ "$NO_JACK_START" -eq 1 ]]; then
+    log_warn "Skipping JACK server startup due to --no-jack-start"
+    return 0
+  fi
+  if jack_running; then
+    log_info "JACK server already running"
+    return 0
+  fi
+  # Try ALSA jackd first
+  if start_jackd_alsa; then return 0; fi
+  # Try jackdbus
+  if start_jackdbus; then return 0; fi
+  # PipeWire fallback: use pw-jack to wrap client
+  if command_exists pw-jack; then
+    log_warn "Falling back to PipeWire JACK wrapper (pw-jack). Not starting jackd."
+    USE_PW_JACK=1
+    return 0
+  fi
+  # Last resort: dummy backend
+  if start_jackd_dummy; then return 0; fi
+  log_error "Unable to start or access any JACK server."
+  return 1
+}
+
+verify_python_jack() {
+  log_info "Verifying Python JACK and soundfile modules"
+  if ! "$VENV/bin/python3" - <<'PY' >/dev/null 2>&1
+import sys
+try:
+    import jack, soundfile  # type: ignore
+except Exception:
+    sys.exit(1)
+PY
+  then
+    log_warn "Python JACK or soundfile import failed. The app may not start correctly."
+  fi
 }
 
 install_systemd() {
@@ -111,10 +251,15 @@ fi
 
 create_venv
 prep_dirs
+verify_python_jack
 
 export BULLEN_CONFIG
 export BULLEN_HOST
 export BULLEN_PORT
+
+if ! ensure_jack_server; then
+  echo "[WARN] [JACK] Proceeding without confirmed JACK server; will try to run anyway."
+fi
 
 if [[ "$DO_SYSTEMD" -eq 1 ]]; then
   install_systemd
@@ -126,4 +271,9 @@ if [[ "$NO_START" -eq 1 ]]; then
 fi
 
 echo "[RUN] Starting app: BULLEN_HOST=$BULLEN_HOST BULLEN_PORT=$BULLEN_PORT"
-exec "$VENV/bin/python3" "$PROJ_DIR/Bullen.py"
+if [[ "$USE_PW_JACK" -eq 1 ]] && command_exists pw-jack; then
+  echo "[RUN] Using pw-jack wrapper"
+  exec pw-jack "$VENV/bin/python3" "$PROJ_DIR/Bullen.py"
+else
+  exec "$VENV/bin/python3" "$PROJ_DIR/Bullen.py"
+fi
