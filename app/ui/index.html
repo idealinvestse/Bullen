@@ -390,7 +390,10 @@
       // Create WebSocket connection
       const ws = new WebSocket(`${proto}://${location.host}/ws/vu`);
       // Send ping message every 2 seconds to keep connection alive
-      ws.onopen = () => { setInterval(() => { try { ws.send('ping'); } catch(e){} }, 2000); };
+      let pingTimer = null;
+      ws.onopen = () => {
+        pingTimer = setInterval(() => { try { ws.send('ping'); } catch(e){} }, 2000);
+      };
       // Handle incoming VU meter updates
       ws.onmessage = (ev) => { 
         try { 
@@ -404,7 +407,14 @@
         } catch(e){} 
       };
       // Reconnect if connection is closed
-      ws.onclose = () => { setTimeout(wsConnect, 2000); };
+      ws.onclose = () => {
+        if (pingTimer) { try { clearInterval(pingTimer); } catch(e){} }
+        setTimeout(wsConnect, 2000);
+      };
+      // Clear ping timer on error as well
+      ws.onerror = () => {
+        if (pingTimer) { try { clearInterval(pingTimer); } catch(e){} }
+      };
     }
 
     /**
