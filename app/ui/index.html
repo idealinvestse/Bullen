@@ -326,6 +326,50 @@
             <div id="metricsContent" class="log" style="min-height:120px;"></div>
           </div>
         </div>
+        
+        <div class="control-section">
+          <h3>Testljud</h3>
+          <div class="row" style="gap:8px; flex-wrap: wrap; margin-bottom: 8px;">
+            <button class="test-btn" onclick="genTestWavs()">🎵 Generera test-WAVs</button>
+            <button class="test-btn" onclick="refreshWavsList()">↻ Uppdatera lista</button>
+            <button class="test-btn danger" onclick="stopAllFeeds()">⛔ Stoppa alla feedar</button>
+          </div>
+          <div class="two-cols">
+            <div>
+              <h4 style="margin:0 0 8px 0;">Inljud (mata in till kanal)</h4>
+              <div class="field"><label>Kanal</label>
+                <select id="inFeedChannel" onchange="onInChannelChange()"></select>
+              </div>
+              <div class="field"><label>Fil</label>
+                <select id="inFeedFile"></select>
+              </div>
+              <div class="field"><label>Loop</label>
+                <select id="inFeedLoop"><option value="true" selected>Ja</option><option value="false">Nej</option></select>
+              </div>
+              <div class="field"><label>Gain (dB)</label>
+                <input id="inFeedGain" type="number" value="0" />
+              </div>
+              <div class="row" style="gap:8px;">
+                <button class="test-btn" onclick="startFeedSelected()">Starta feed</button>
+                <button class="test-btn" onclick="stopFeedSelected()">Stoppa feed</button>
+              </div>
+              <div class="row" style="gap:8px; margin-top:8px;">
+                <button class="test-btn" onclick="feedSequence()">▶ Feed-sekvens 1..6</button>
+              </div>
+            </div>
+            <div>
+              <h4 style="margin:0 0 8px 0;">Utljud (till headset)</h4>
+              <div class="field"><label>Fördröjning per kanal (ms)</label>
+                <input id="outCycleDelay" type="number" value="800" />
+              </div>
+              <div class="row" style="gap:8px;">
+                <button class="test-btn" onclick="headsetCycle()">▶ Cykla ut (1..6)</button>
+                <button class="test-btn" onclick="feedAndHeadsetSequence()">▶ Feed + välj kanal</button>
+              </div>
+              <div class="log" id="testAudioLog" style="margin-top:8px; min-height: 80px;"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
   </main>
@@ -973,6 +1017,113 @@
     // Init
     initState();
     wsConnect();
+
+    // ----- Testljud (WAV generation + feed) -----
+    const devWavs = { mapping: {}, listedAt: 0 };
+    function logTA(msg) { const el = document.getElementById('testAudioLog'); if (el) { const d = document.createElement('div'); d.textContent = msg; el.appendChild(d); el.scrollTop = el.scrollHeight; } }
+    async function genTestWavs() {
+      try {
+        const r = await fetch('/api/tools/generate_wavs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seconds: 2.0, samplerate: 48000 }) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(JSON.stringify(j));
+        logTA(`Genererade: ${j.files.join(', ')}`);
+        await refreshWavsList();
+      } catch (e) { logTA(`Fel vid generering: ${e}`); }
+    }
+    async function refreshWavsList() {
+      try {
+        const r = await fetch('/api/tools/wavs');
+        const j = await r.json();
+        devWavs.mapping = j.files || {};
+        devWavs.listedAt = Date.now();
+        // populate selects
+        const chSel = document.getElementById('inFeedChannel');
+        const fileSel = document.getElementById('inFeedFile');
+        if (chSel && fileSel) {
+          chSel.innerHTML = '';
+          for (let i = 1; i <= N; i++) {
+            const opt = document.createElement('option'); opt.value = String(i); opt.textContent = `CH ${i}`; chSel.appendChild(opt);
+          }
+          onInChannelChange();
+        }
+      } catch (e) { logTA(`Fel vid listning av WAVs: ${e}`); }
+    }
+    function onInChannelChange() {
+      const ch = parseInt(document.getElementById('inFeedChannel').value || '1', 10);
+      const fileSel = document.getElementById('inFeedFile');
+      const files = (devWavs.mapping && devWavs.mapping[ch]) ? devWavs.mapping[ch] : [];
+      fileSel.innerHTML = '';
+      for (const f of files) { const opt = document.createElement('option'); opt.value = f; opt.textContent = f; fileSel.appendChild(opt); }
+    }
+    async function startFeedSelected() {
+      const ch = parseInt(document.getElementById('inFeedChannel').value || '1', 10);
+      const file = document.getElementById('inFeedFile').value;
+      const loop = document.getElementById('inFeedLoop').value === 'true';
+      const gain = parseFloat(document.getElementById('inFeedGain').value || '0');
+      if (!file) { logTA('Ingen fil vald. Klicka "Generera test-WAVs" först.'); return; }
+      try {
+        const r = await fetch('/api/tools/feed/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file, input: ch, loop, gain_db: gain }) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(JSON.stringify(j));
+        logTA(`Startade feed CH ${ch} (pid=${j.pid})`);
+      } catch (e) { logTA(`Fel vid start av feed: ${e}`); }
+    }
+    async function stopFeedSelected() {
+      const ch = parseInt(document.getElementById('inFeedChannel').value || '1', 10);
+      try {
+        const r = await fetch('/api/tools/feed/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: ch }) });
+        await r.json();
+        logTA(`Stoppade feed CH ${ch}`);
+      } catch (e) { logTA(`Fel vid stopp: ${e}`); }
+    }
+    async function stopAllFeeds() {
+      for (let i = 1; i <= N; i++) {
+        try { await fetch('/api/tools/feed/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: i }) }); } catch {}
+      }
+      logTA('Stoppa alla feedar: skickat.');
+    }
+    async function ensureWavsOrGenerate() {
+      await refreshWavsList();
+      let any = false;
+      for (let i = 1; i <= N; i++) if (devWavs.mapping[i] && devWavs.mapping[i].length) { any = true; break; }
+      if (!any) await genTestWavs();
+      await refreshWavsList();
+    }
+    async function feedSequence() {
+      await ensureWavsOrGenerate();
+      const delay = parseInt(document.getElementById('outCycleDelay').value || '800', 10);
+      let prev = 0;
+      for (let i = 1; i <= N; i++) {
+        if (prev) { try { await fetch('/api/tools/feed/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: prev }) }); } catch {} }
+        const files = devWavs.mapping[i] || [];
+        if (!files.length) { logTA(`Ingen WAV för CH ${i}`); continue; }
+        const file = files[0];
+        await fetch('/api/tools/feed/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file, input: i, loop: true }) });
+        logTA(`Feed -> CH ${i}: ${file}`);
+        await new Promise(r => setTimeout(r, delay));
+        prev = i;
+      }
+    }
+    async function headsetCycle() {
+      const delay = parseInt(document.getElementById('outCycleDelay').value || '800', 10);
+      for (let i = 1; i <= N; i++) { await selectChannel(i); logTA(`Headset välj CH ${i}`); await new Promise(r => setTimeout(r, delay)); }
+    }
+    async function feedAndHeadsetSequence() {
+      await ensureWavsOrGenerate();
+      const delay = parseInt(document.getElementById('outCycleDelay').value || '800', 10);
+      let prev = 0;
+      for (let i = 1; i <= N; i++) {
+        if (prev) { try { await fetch('/api/tools/feed/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: prev }) }); } catch {} }
+        const files = devWavs.mapping[i] || [];
+        if (!files.length) { logTA(`Ingen WAV för CH ${i}`); continue; }
+        const file = files[0];
+        await fetch('/api/tools/feed/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ file, input: i, loop: true }) });
+        await selectChannel(i);
+        logTA(`Feed + headset -> CH ${i}: ${file}`);
+        await new Promise(r => setTimeout(r, delay));
+        prev = i;
+      }
+    }
   </script>
 </body>
 </html>
