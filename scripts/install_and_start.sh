@@ -105,6 +105,8 @@ install_apt() {
   local pkgs=("${pkgs_common[@]}")
   if [[ "${BACKEND,,}" == "jack" ]]; then
     pkgs+=("${pkgs_jack[@]}")
+    # Add Audio Injector Octo specific packages for reliable detection
+    pkgs+=("device-tree-compiler" "i2c-tools")
   fi
   for p in "${pkgs[@]}"; do
     if apt-cache policy "$p" 2>/dev/null | grep -q 'Candidate:'; then
@@ -198,6 +200,43 @@ start_jackd_dummy() {
   return 1
 }
 
+# Check and fix Audio Injector Octo module loading issues
+fix_octo_modules() {
+  if [[ "${BACKEND,,}" != "jack" ]]; then return 0; fi
+  
+  local modprobe_conf="/etc/modprobe.d/audioinjector-octo.conf"
+  local SUDO; SUDO=$(need_sudo)
+  
+  # Check if Audio Injector Octo is detected
+  if ! lsmod | grep -q "snd_soc_audioinjector_octo"; then
+    log_info "Audio Injector Octo not detected, checking module dependencies"
+    
+    # Create modprobe config to ensure proper module loading order
+    if [[ ! -f "$modprobe_conf" ]]; then
+      log_info "Creating Audio Injector Octo modprobe configuration"
+      echo "softdep snd_soc_audioinjector_octo_soundcard pre: snd_soc_cs42xx8 snd_soc_cs42xx8_i2c" | $SUDO tee "$modprobe_conf" >/dev/null
+    fi
+    
+    # Try manual module loading sequence (common fix from forum)
+    log_info "Attempting manual module loading sequence"
+    $SUDO modprobe -r snd_soc_audioinjector_octo_soundcard 2>/dev/null || true
+    $SUDO modprobe -r snd_soc_cs42xx8_i2c 2>/dev/null || true
+    $SUDO modprobe -r snd_soc_cs42xx8 2>/dev/null || true
+    sleep 1
+    $SUDO modprobe snd_soc_cs42xx8
+    $SUDO modprobe snd_soc_cs42xx8_i2c
+    $SUDO modprobe snd_soc_audioinjector_octo_soundcard
+    sleep 2
+    
+    # Check if modules loaded successfully
+    if lsmod | grep -q "snd_soc_audioinjector_octo"; then
+      log_info "Audio Injector Octo modules loaded successfully"
+    else
+      log_warn "Audio Injector Octo modules failed to load - card may not be detected"
+    fi
+  fi
+}
+
 ensure_jack_server() {
   if [[ "$NO_JACK_START" -eq 1 ]]; then
     log_warn "Skipping JACK server startup due to --no-jack-start"
@@ -207,6 +246,10 @@ ensure_jack_server() {
     log_info "JACK server already running"
     return 0
   fi
+  
+  # Fix Audio Injector Octo module issues before starting JACK
+  fix_octo_modules
+  
   # Try ALSA jackd first
   if start_jackd_alsa; then return 0; fi
   # Try jackdbus

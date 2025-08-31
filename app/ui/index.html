@@ -35,6 +35,15 @@
     .label { font-size: 12px; color: var(--muted); }
     .small { font-size: 12px; color: var(--muted); }
     .card { padding: 12px; border: 1px solid #222; border-radius: 10px; background: #131722; }
+    .info-icon { cursor: pointer; font-size: 14px; color: var(--accent); margin-left: 8px; }
+    .info-icon:hover { opacity: 0.7; }
+    .settings-content { display: grid; gap: 20px; }
+    .setting-section { background: #0f1419; padding: 16px; border-radius: 8px; border: 1px solid #1a2332; }
+    .setting-section h3 { margin: 0 0 8px 0; color: var(--accent); font-size: 16px; }
+    .setting-section p { margin: 0 0 12px 0; line-height: 1.4; }
+    .setting-section ul { margin: 0; padding-left: 20px; }
+    .setting-section li { margin-bottom: 4px; line-height: 1.3; }
+    .setting-section strong { color: var(--fg); }
   </style>
 </head>
 <body>
@@ -42,12 +51,14 @@
     <h1>Bullen Audio Router</h1>
     <div class="spacer"></div>
     <div class="small">Selected: <span id="selected">-</span></div>
+    <button id="settingsBtn" onclick="toggleSettings()" style="margin-left: 8px;">⚙️ Settings</button>
   </header>
 
-  <main>
+  <main id="mainView">
     <section class="panel">
       <div class="row" style="margin-bottom:8px;">
         <div class="label">Select channel</div>
+        <div class="info-icon" onclick="showInfo('channel')" title="Click for more info">ℹ️</div>
       </div>
       <div class="channels" id="channelButtons"></div>
     </section>
@@ -55,6 +66,7 @@
     <section class="panel">
       <div class="row" style="margin-bottom:8px;">
         <div class="label">Gains & Mutes</div>
+        <div class="info-icon" onclick="showInfo('gain')" title="Click for more info">ℹ️</div>
       </div>
       <div class="grid-3" id="gainMute"></div>
     </section>
@@ -62,8 +74,72 @@
     <section class="panel">
       <div class="row" style="margin-bottom:8px;">
         <div class="label">VU meters (RMS with peak marker)</div>
+        <div class="info-icon" onclick="showInfo('vu')" title="Click for more info">ℹ️</div>
       </div>
       <div class="grid" id="meters"></div>
+    </section>
+  </main>
+
+  <main id="settingsView" style="display: none;">
+    <section class="panel">
+      <div class="row" style="margin-bottom:16px;">
+        <h2 style="margin: 0; font-size: 20px;">Inställningar & Information</h2>
+        <div class="spacer"></div>
+        <button onclick="toggleSettings()">← Tillbaka</button>
+      </div>
+      
+      <div class="settings-content">
+        <div class="setting-section">
+          <h3>Kanalval</h3>
+          <p>Välj vilken av de 6 ingångskanalerna som ska skickas till hörlurarna (L/R monitor). Den valda kanalen hörs i båda öronsnäckorna.</p>
+          <ul>
+            <li><strong>CH 1-6:</strong> Motsvarar fysiska ingångar på Audio Injector Octo</li>
+            <li><strong>Snabb växling:</strong> Klicka på kanalknapparna för omedelbar växling</li>
+            <li><strong>Blå markering:</strong> Visar aktiv kanal</li>
+          </ul>
+        </div>
+
+        <div class="setting-section">
+          <h3>Gain & Mute</h3>
+          <p>Justera volym och tysta individuella kanaler. Gain påverkar både monitor och inspelning.</p>
+          <ul>
+            <li><strong>Gain-reglage:</strong> -60 dB till +20 dB, justeras i 0.5 dB-steg</li>
+            <li><strong>Mute-knapp:</strong> Röd = tystad, grå = aktiv</li>
+            <li><strong>Realtidsuppdatering:</strong> Ändringar tillämpas omedelbart</li>
+            <li><strong>Inspelning:</strong> Sker före gain/mute för att bevara originalljud</li>
+          </ul>
+        </div>
+
+        <div class="setting-section">
+          <h3>VU-mätare</h3>
+          <p>Visar ljudnivåer i realtid med både RMS (genomsnittsnivå) och peak (toppvärden).</p>
+          <ul>
+            <li><strong>Grön zon:</strong> Normala nivåer (-60 till -20 dB)</li>
+            <li><strong>Gul zon:</strong> Höga nivåer (-20 till -6 dB)</li>
+            <li><strong>Röd zon:</strong> Risk för klippning (-6 till 0 dB)</li>
+            <li><strong>Gul linje:</strong> Peak-markör visar högsta momentana nivå</li>
+            <li><strong>Uppdateringsfrekvens:</strong> ~20 Hz för smidig visning</li>
+          </ul>
+        </div>
+
+        <div class="setting-section">
+          <h3>Systeminformation</h3>
+          <div id="systemInfo">
+            <p>Laddar systeminformation...</p>
+          </div>
+        </div>
+
+        <div class="setting-section">
+          <h3>Tekniska detaljer</h3>
+          <ul>
+            <li><strong>Audio backend:</strong> <span id="backendInfo">-</span></li>
+            <li><strong>Samplingsfrekvens:</strong> <span id="sampleRateInfo">-</span> Hz</li>
+            <li><strong>Bufferstorlek:</strong> <span id="bufferSizeInfo">-</span> samples</li>
+            <li><strong>Latens:</strong> ~<span id="latencyInfo">-</span> ms</li>
+            <li><strong>Inspelning:</strong> <span id="recordingInfo">-</span></li>
+          </ul>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -241,6 +317,74 @@
       ws.onmessage = (ev) => { try { const data = JSON.parse(ev.data); updateVU(data); } catch(e){} };
       // Reconnect if connection is closed
       ws.onclose = () => { setTimeout(wsConnect, 2000); };
+    }
+
+    /**
+     * Toggle between main view and settings view
+     */
+    function toggleSettings() {
+      const mainView = document.getElementById('mainView');
+      const settingsView = document.getElementById('settingsView');
+      const isSettingsVisible = settingsView.style.display !== 'none';
+      
+      if (isSettingsVisible) {
+        mainView.style.display = 'block';
+        settingsView.style.display = 'none';
+      } else {
+        mainView.style.display = 'none';
+        settingsView.style.display = 'block';
+        loadSystemInfo();
+      }
+    }
+
+    /**
+     * Show information popup for specific feature
+     * @param {string} type - Type of info to show
+     */
+    function showInfo(type) {
+      const messages = {
+        channel: 'Kanalval: Välj vilken ingång som ska höras i hörlurarna. Den valda kanalen (blå) skickas till både vänster och höger hörlurar.',
+        gain: 'Gain & Mute: Justera volym (-60 till +20 dB) och tysta kanaler. Röd mute-knapp = tystad. Gain påverkar både monitor och inspelning.',
+        vu: 'VU-mätare: Grön = normalt, gul = högt, röd = risk för klippning. Stapeln visar RMS-nivå, gul linje visar peak-värde.'
+      };
+      alert(messages[type] || 'Information inte tillgänglig.');
+    }
+
+    /**
+     * Load system information for settings view
+     */
+    async function loadSystemInfo() {
+      try {
+        const [stateRes, configRes] = await Promise.all([
+          fetch('/api/state'),
+          fetch('/api/config')
+        ]);
+        const state = await stateRes.json();
+        const config = await configRes.json();
+        
+        // Update system info elements
+        document.getElementById('backendInfo').textContent = config.backend || 'jack';
+        document.getElementById('sampleRateInfo').textContent = state.samplerate || '-';
+        document.getElementById('bufferSizeInfo').textContent = state.frames_per_period || '-';
+        
+        // Calculate approximate latency
+        const latency = state.samplerate && state.frames_per_period ? 
+          ((state.frames_per_period * 2) / state.samplerate * 1000).toFixed(1) : '-';
+        document.getElementById('latencyInfo').textContent = latency;
+        
+        document.getElementById('recordingInfo').textContent = state.recording ? 'Aktiverad' : 'Inaktiverad';
+        
+        // System info summary
+        const systemInfoEl = document.getElementById('systemInfo');
+        systemInfoEl.innerHTML = `
+          <p><strong>Status:</strong> Ansluten och aktiv</p>
+          <p><strong>Kanaler:</strong> ${config.inputs || 6} ingångar, ${config.outputs || 2} utgångar</p>
+          <p><strong>Vald kanal:</strong> CH ${state.selected_channel || 1}</p>
+          <p><strong>Inspelningar:</strong> ${config.recordings_dir || 'recordings'}/</p>
+        `;
+      } catch (error) {
+        document.getElementById('systemInfo').innerHTML = '<p style="color: var(--warn);">Kunde inte ladda systeminformation</p>';
+      }
     }
 
     initState();
