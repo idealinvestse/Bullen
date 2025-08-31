@@ -4,6 +4,7 @@
 # Usage:
 #   ./scripts/install_and_start.sh [--apt] [--systemd] [--host=0.0.0.0] [--port=8000] [--config=path]
 #                                  [--no-start] [--service-name=bullen] [--user=pi]
+#                                  [--backend=jack|dummy]
 #                                  [--no-jack-start] [--jack-device=hw:0]
 #                                  [--jack-rate=48000] [--jack-frames=128] [--jack-periods=2]
 #
@@ -16,6 +17,7 @@
 #   --no-start     Do not start foreground app after setup
 #   --service-name Name of systemd unit (default: bullen)
 #   --user=...     User to run the systemd service as (default: current user)
+#   --backend=...  Audio backend to use: 'jack' (full) or 'dummy' (no JACK, UI-only). Can also set env BULLEN_BACKEND.
 #   --no-jack-start  Do not attempt to start a JACK server (use existing or pw-jack wrapper if available)
 #   --jack-device     ALSA device for jackd (e.g., hw:0, hw:audioinjector)
 #   --jack-rate       Sample rate for jackd (default 48000)
@@ -39,6 +41,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJ_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VENV="$PROJ_DIR/.venv"
 REQUIREMENTS="$PROJ_DIR/requirements.txt"
+REQUIREMENTS_DUMMY="$PROJ_DIR/requirements-dummy.txt"
 DEFAULT_CONFIG="$PROJ_DIR/config.yaml"
 RECORDINGS_DIR="$PROJ_DIR/recordings"
 
@@ -50,6 +53,7 @@ SERVICE_USER="$(id -un)"
 BULLEN_HOST="${BULLEN_HOST:-0.0.0.0}"
 BULLEN_PORT="${BULLEN_PORT:-8000}"
 BULLEN_CONFIG="${BULLEN_CONFIG:-$DEFAULT_CONFIG}"
+BACKEND="${BULLEN_BACKEND:-jack}"
 
 # JACK configuration defaults (can be overridden via flags or env)
 JACK_DEVICE="${JACK_DEVICE:-hw:0}"
@@ -69,6 +73,7 @@ for arg in "$@"; do
     --host=*) BULLEN_HOST="${arg#*=}" ;;
     --port=*) BULLEN_PORT="${arg#*=}" ;;
     --config=*) BULLEN_CONFIG="${arg#*=}" ;;
+    --backend=*) BACKEND="${arg#*=}" ;;
     --no-jack-start) NO_JACK_START=1 ;;
     --jack-device=*) JACK_DEVICE="${arg#*=}" ;;
     --jack-rate=*) JACK_SR="${arg#*=}" ;;
@@ -89,12 +94,18 @@ install_apt() {
   echo "[APT] Installing OS dependencies..."
   $SUDO apt-get update
   # Install packages individually if available to avoid failing the whole batch
-  local pkgs=(
+  local pkgs_common=(
     python3 python3-venv python3-pip
-    libjack-jackd2-dev libsndfile1-dev
-    jackd2 qjackctl
+    libsndfile1-dev
+  )
+  local pkgs_jack=(
+    libjack-jackd2-dev jackd2 qjackctl
     pipewire-audio-client-libraries libspa-0.2-jack
   )
+  local pkgs=("${pkgs_common[@]}")
+  if [[ "${BACKEND,,}" == "jack" ]]; then
+    pkgs+=("${pkgs_jack[@]}")
+  fi
   for p in "${pkgs[@]}"; do
     if apt-cache policy "$p" 2>/dev/null | grep -q 'Candidate:'; then
       $SUDO apt-get install -y --no-install-recommends "$p" || echo "[WARN] [APT] Package $p failed to install; continuing"
@@ -112,8 +123,14 @@ create_venv() {
   # shellcheck disable=SC1091
   source "$VENV/bin/activate"
   python -m pip install --upgrade pip setuptools wheel
-  if [[ -f "$REQUIREMENTS" ]]; then
-    pip install -r "$REQUIREMENTS"
+  local req="$REQUIREMENTS"
+  if [[ "${BACKEND,,}" != "jack" && -f "$REQUIREMENTS_DUMMY" ]]; then
+    req="$REQUIREMENTS_DUMMY"
+  fi
+  if [[ -f "$req" ]]; then
+    pip install -r "$req"
+  else
+    echo "[WARN] Requirements file not found: $req"
   fi
 }
 
@@ -237,6 +254,13 @@ install_systemd() {
     -e "s|^ExecStart=.*|ExecStart=$VENV/bin/python3 $PROJ_DIR/Bullen.py|g" \
     "$UNIT_SRC" > "$UNIT_TMP"
 
+  # Ensure backend environment is present
+  if ! grep -q '^Environment=BULLEN_BACKEND=' "$UNIT_TMP"; then
+    printf '\nEnvironment=BULLEN_BACKEND=%s\n' "$BACKEND" >> "$UNIT_TMP"
+  else
+    sed -i -e "s|^Environment=BULLEN_BACKEND=.*|Environment=BULLEN_BACKEND=$BACKEND|g" "$UNIT_TMP"
+  fi
+
   echo "[SYSTEMD] Installing unit as /etc/systemd/system/${SERVICE_NAME}.service"
   $SUDO install -m 0644 "$UNIT_TMP" "/etc/systemd/system/${SERVICE_NAME}.service"
   rm -f "$UNIT_TMP"
@@ -251,14 +275,19 @@ fi
 
 create_venv
 prep_dirs
-verify_python_jack
+if [[ "${BACKEND,,}" == "jack" ]]; then
+  verify_python_jack
+fi
 
 export BULLEN_CONFIG
 export BULLEN_HOST
 export BULLEN_PORT
+export BULLEN_BACKEND="$BACKEND"
 
-if ! ensure_jack_server; then
-  echo "[WARN] [JACK] Proceeding without confirmed JACK server; will try to run anyway."
+if [[ "${BACKEND,,}" == "jack" ]]; then
+  if ! ensure_jack_server; then
+    echo "[WARN] [JACK] Proceeding without confirmed JACK server; will try to run anyway."
+  fi
 fi
 
 if [[ "$DO_SYSTEMD" -eq 1 ]]; then
@@ -270,8 +299,8 @@ if [[ "$NO_START" -eq 1 ]]; then
   exit 0
 fi
 
-echo "[RUN] Starting app: BULLEN_HOST=$BULLEN_HOST BULLEN_PORT=$BULLEN_PORT"
-if [[ "$USE_PW_JACK" -eq 1 ]] && command_exists pw-jack; then
+echo "[RUN] Starting app: BULLEN_HOST=$BULLEN_HOST BULLEN_PORT=$BULLEN_PORT BACKEND=${BACKEND}"
+if [[ "${BACKEND,,}" == "jack" && "$USE_PW_JACK" -eq 1 ]] && command_exists pw-jack; then
   echo "[RUN] Using pw-jack wrapper"
   exec pw-jack "$VENV/bin/python3" "$PROJ_DIR/Bullen.py"
 else

@@ -93,8 +93,20 @@ auto_connect_playback: true
 capture_match: capture
 playback_match: playback
 selected_channel: 1
+backend: jack  # 'jack' (full funktion) eller 'dummy' (ingen JACK; UI-only)
 ```
 - `capture_match`/`playback_match` används för att auto-ansluta fysiska portar (PipeWire/JACK). Justera vid behov.
+
+### Backend-val (JACK vs. Dummy)
+- `backend: jack` (standard) använder JACK/PipeWire-JACK och ger full funktion:
+  - 6 in → välj 1 till L/R, gain/mute per kanal, VU (peak/RMS), inspelning per kanal.
+- `backend: dummy` kör utan JACK-server (ingen audio I/O, ingen inspelning):
+  - UI och API fungerar, VU visar 0, kontroller uppdaterar intern state men påverkar inget ljud.
+
+Sätt backend på ett av tre sätt:
+- I `config.yaml`: `backend: dummy`
+- Miljövariabel: `export BULLEN_BACKEND=dummy`
+- Installationsskript-flagga: `./scripts/install_and_start.sh --backend=dummy`
 
 ## UI
 - Öppna `http://<Pi-IP>:8000/` => redirect till `/ui/`
@@ -113,6 +125,7 @@ selected_channel: 1
 - Ingen DSP (AGC/limiter/AEC) i MVP (kan läggas till fas 2)
 - Endast en vald kanal till L/R; ingen mix av flera kanaler
 - UI är minimalistiskt
+- I `dummy`-backend finns ingen audio I/O och ingen inspelning (avsiktligt för miljöer utan JACK)
 
 ## Felsökning
 - Visa porter och kopplingar: `pw-top`, `qpwgraph`

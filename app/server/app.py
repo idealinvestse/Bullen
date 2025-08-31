@@ -6,16 +6,15 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.engine.audio_engine import AudioEngine
 import contextlib
 
 
-def create_app(engine: AudioEngine) -> FastAPI:
+def create_app(engine: Any) -> FastAPI:
     """
     Create and configure the FastAPI application.
     
     Args:
-        engine (AudioEngine): The audio engine instance to use
+        engine (Any): The audio engine instance to use
         
     Returns:
         FastAPI: Configured FastAPI application
