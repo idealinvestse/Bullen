@@ -358,13 +358,30 @@
               </div>
             </div>
             <div>
-              <h4 style="margin:0 0 8px 0;">Utljud (till headset)</h4>
+              <h4 style="margin:0 0 8px 0;">Utljud (8 kanaler)</h4>
               <div class="field"><label>Fördröjning per kanal (ms)</label>
                 <input id="outCycleDelay" type="number" value="800" />
               </div>
               <div class="row" style="gap:8px;">
                 <button class="test-btn" onclick="headsetCycle()">▶ Cykla ut (1..6)</button>
                 <button class="test-btn" onclick="feedAndHeadsetSequence()">▶ Feed + välj kanal</button>
+              </div>
+              <div class="row" style="gap:8px; margin-top:8px;">
+                <button class="test-btn" onclick="testAllOutputChannels()">🔊 Testa alla 8 utgångar</button>
+                <button class="test-btn" onclick="testSpecificOutput()">🎯 Testa specifik utgång</button>
+              </div>
+              <div class="field" style="margin-top:8px;">
+                <label>Utgångskanal att testa</label>
+                <select id="outputChannelSelect">
+                  <option value="1">Utgång 1 (out_l)</option>
+                  <option value="2">Utgång 2 (out_r)</option>
+                  <option value="3">Utgång 3</option>
+                  <option value="4">Utgång 4</option>
+                  <option value="5">Utgång 5</option>
+                  <option value="6">Utgång 6</option>
+                  <option value="7">Utgång 7</option>
+                  <option value="8">Utgång 8</option>
+                </select>
               </div>
               <div class="log" id="testAudioLog" style="margin-top:8px; min-height: 80px;"></div>
             </div>
@@ -1388,6 +1405,159 @@
         refreshUploadedFiles();
       }
     }, 500);
+    
+    // ----- Output Channel Testing Functions -----
+    async function testAllOutputChannels() {
+      logTA('Startar test av alla 8 utgångskanaler...');
+      await ensureWavsOrGenerate();
+      const delay = parseInt(document.getElementById('outCycleDelay').value || '800', 10);
+      
+      // Test each input channel routed to outputs
+      for (let inputCh = 1; inputCh <= 6; inputCh++) {
+        const files = devWavs.mapping[inputCh] || [];
+        if (!files.length) {
+          logTA(`Ingen WAV för ingång ${inputCh}, hoppar över`);
+          continue;
+        }
+        
+        const file = files[0];
+        
+        // Start feed on input channel
+        try {
+          await fetch('/api/tools/feed/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file, input: inputCh, loop: true })
+          });
+          
+          // Select this input channel (routes to all 8 outputs)
+          await selectChannel(inputCh);
+          logTA(`🔊 Ingång ${inputCh} → Alla 8 utgångar: ${file}`);
+          
+          await new Promise(r => setTimeout(r, delay));
+          
+          // Stop feed
+          await fetch('/api/tools/feed/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ input: inputCh })
+          });
+          
+        } catch (error) {
+          logTA(`Fel vid test av ingång ${inputCh}: ${error.message}`);
+        }
+      }
+      
+      logTA('Test av alla utgångskanaler klart');
+    }
+    
+    async function testSpecificOutput() {
+      const outputChannel = parseInt(document.getElementById('outputChannelSelect').value);
+      const outputNames = ['out_l', 'out_r', 'out_3', 'out_4', 'out_5', 'out_6', 'out_7', 'out_8'];
+      const outputName = outputNames[outputChannel - 1] || `out_${outputChannel}`;
+      
+      logTA(`Testar specifik utgång ${outputChannel} (${outputName})...`);
+      await ensureWavsOrGenerate();
+      
+      // Use first available input channel with audio
+      let testInputCh = 1;
+      let testFile = null;
+      
+      for (let i = 1; i <= 6; i++) {
+        const files = devWavs.mapping[i] || [];
+        if (files.length > 0) {
+          testInputCh = i;
+          testFile = files[0];
+          break;
+        }
+      }
+      
+      if (!testFile) {
+        logTA('Ingen testfil tillgänglig');
+        return;
+      }
+      
+      try {
+        // Start feed on test input
+        await fetch('/api/tools/feed/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file: testFile, input: testInputCh, loop: true })
+        });
+        
+        // Select the input (routes to all outputs including the one we want to test)
+        await selectChannel(testInputCh);
+        
+        logTA(`🎯 Test av utgång ${outputChannel} (${outputName})`);
+        logTA(`   Använder ingång ${testInputCh}: ${testFile}`);
+        logTA(`   Lyssna på utgång ${outputChannel} för att verifiera ljud`);
+        
+        // Let it play for a while
+        const delay = parseInt(document.getElementById('outCycleDelay').value || '800', 10);
+        await new Promise(r => setTimeout(r, delay * 2));
+        
+        // Stop feed
+        await fetch('/api/tools/feed/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ input: testInputCh })
+        });
+        
+        logTA(`Test av utgång ${outputChannel} klart`);
+        
+      } catch (error) {
+        logTA(`Fel vid test av utgång ${outputChannel}: ${error.message}`);
+      }
+    }
+    
+    // Enhanced output channel cycling for all 8 outputs
+    async function testOutputChannelCycle() {
+      logTA('Startar cykel-test av alla 8 utgångskanaler...');
+      await ensureWavsOrGenerate();
+      const delay = parseInt(document.getElementById('outCycleDelay').value || '800', 10);
+      
+      // Use different input channels for variety
+      const inputChannels = [1, 2, 3, 4, 5, 6];
+      
+      for (let outputCh = 1; outputCh <= 8; outputCh++) {
+        const inputCh = inputChannels[(outputCh - 1) % inputChannels.length];
+        const files = devWavs.mapping[inputCh] || [];
+        
+        if (!files.length) continue;
+        
+        const file = files[0];
+        const outputNames = ['out_l', 'out_r', 'out_3', 'out_4', 'out_5', 'out_6', 'out_7', 'out_8'];
+        const outputName = outputNames[outputCh - 1] || `out_${outputCh}`;
+        
+        try {
+          // Start feed
+          await fetch('/api/tools/feed/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file, input: inputCh, loop: true })
+          });
+          
+          // Select input (routes to all outputs)
+          await selectChannel(inputCh);
+          
+          logTA(`🔄 Utgång ${outputCh} (${outputName}) ← Ingång ${inputCh}`);
+          
+          await new Promise(r => setTimeout(r, delay));
+          
+          // Stop feed
+          await fetch('/api/tools/feed/stop', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ input: inputCh })
+          });
+          
+        } catch (error) {
+          logTA(`Fel vid cykel-test utgång ${outputCh}: ${error.message}`);
+        }
+      }
+      
+      logTA('Cykel-test av alla utgångar klart');
+    }
   </script>
 </body>
 </html>

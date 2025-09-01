@@ -67,8 +67,21 @@ class AudioEngine:
         # Ports
         # Register input ports for each channel
         self.inports = [self.client.inports.register(f'in_{i + 1}') for i in range(self.num_inputs)]
-        # Register output ports for left and right channels
-        self.outports = [self.client.outports.register('out_l'), self.client.outports.register('out_r')]
+        # Register output ports - dynamic based on config
+        if self.num_outputs == 2:
+            # Legacy stereo mode
+            self.outports = [self.client.outports.register('out_l'), self.client.outports.register('out_r')]
+        else:
+            # Multi-channel mode - register all output ports
+            self.outports = []
+            for i in range(self.num_outputs):
+                if i == 0:
+                    port_name = 'out_l'
+                elif i == 1:
+                    port_name = 'out_r'
+                else:
+                    port_name = f'out_{i + 1}'
+                self.outports.append(self.client.outports.register(port_name))
 
         # State
         # Thread lock for protecting shared state
@@ -266,10 +279,15 @@ class AudioEngine:
             for o in self.outports:
                 o.get_array()[:] = 0.0
         else:
-            # Fast monitor to both L/R
-            # Copy the selected channel to both left and right outputs
-            self.outports[0].get_array()[:] = route_buf
-            self.outports[1].get_array()[:] = route_buf
+            # Route selected channel to all outputs
+            if self.num_outputs == 2:
+                # Legacy stereo mode - copy to both L/R
+                self.outports[0].get_array()[:] = route_buf
+                self.outports[1].get_array()[:] = route_buf
+            else:
+                # Multi-channel mode - copy selected channel to all outputs
+                for o in self.outports:
+                    o.get_array()[:] = route_buf
 
         # Enqueue raw input for recording (non-blocking)
         # Only record if recording is enabled and threads have been started

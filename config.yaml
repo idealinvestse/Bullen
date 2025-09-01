@@ -3,7 +3,7 @@ samplerate: 48000
 frames_per_period: 128
 nperiods: 2
 inputs: 6
-outputs: 2
+outputs: 8
 record: true
 recordings_dir: recordings
 auto_connect_capture: true
