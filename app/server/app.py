@@ -7,13 +7,11 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Uplo
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse, JSONResponse
 import asyncio
-import json
-import logging
 import shutil
 import tempfile
 import soundfile as sf
 import uuid
-from contextlib import asynccontextmanager
+import contextlib
 from scripts.make_test_wavs import make_tone  # reuse tone writer
 
 
@@ -421,6 +419,93 @@ def create_app(engine: Any) -> FastAPI:
             return {"ok": True, "deleted": filename}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Error deleting file: {str(e)}")
+
+    # -------- Audio Output Testing --------
+
+    @app.post("/api/test/output_channels")
+    async def test_output_channels():
+        """
+        Run automated test of all output channels.
+        
+        Returns:
+            JSON response with test status
+        """
+        try:
+            # Import the test script
+            import subprocess
+            import sys
+            
+            # Get the script path
+            script_path = _project_root() / "scripts" / "audio_output_test.py"
+            
+            if not script_path.exists():
+                raise HTTPException(status_code=500, detail="Audio test script not found")
+            
+            # Run the test script
+            result = subprocess.run([
+                sys.executable, str(script_path),
+                "--server", "http://localhost:8000",
+                "--duration", "3.0",
+                "--pause", "1.0"
+            ], capture_output=True, text=True, timeout=120)
+            
+            return {
+                "success": result.returncode == 0,
+                "output": result.stdout,
+                "error": result.stderr if result.stderr else None,
+                "return_code": result.returncode
+            }
+            
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=408, detail="Test timeout - took longer than 2 minutes")
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Test execution error: {str(e)}")
+
+    @app.post("/api/test/generate_test_audio")
+    async def generate_test_audio():
+        """
+        Generate test audio files for manual testing.
+        
+        Returns:
+            JSON response with generated files
+        """
+        try:
+            import subprocess
+            import sys
+            
+            script_path = _project_root() / "scripts" / "audio_output_test.py"
+            
+            if not script_path.exists():
+                raise HTTPException(status_code=500, detail="Audio test script not found")
+            
+            # Generate test files only
+            result = subprocess.run([
+                sys.executable, str(script_path),
+                "--generate-only"
+            ], capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                # List generated files
+                test_dir = _project_root() / "scripts" / "output_test_audio"
+                files = []
+                if test_dir.exists():
+                    files = [f.name for f in test_dir.glob("*.wav")]
+                
+                return {
+                    "success": True,
+                    "message": "Test audio files generated successfully",
+                    "files": files,
+                    "output": result.stdout
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": result.stderr,
+                    "output": result.stdout
+                }
+                
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Generation error: {str(e)}")
 
     # -------- WebSocket for VU --------
 

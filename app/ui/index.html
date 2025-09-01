@@ -370,6 +370,10 @@
                 <button class="test-btn" onclick="testAllOutputChannels()">🔊 Testa alla 8 utgångar</button>
                 <button class="test-btn" onclick="testSpecificOutput()">🎯 Testa specifik utgång</button>
               </div>
+              <div class="row" style="gap:8px; margin-top:8px;">
+                <button class="test-btn" onclick="runAutomaticOutputTest()">🤖 Automatiskt ljudtest</button>
+                <button class="test-btn" onclick="generateTestAudio()">🎵 Generera testljud</button>
+              </div>
               <div class="field" style="margin-top:8px;">
                 <label>Utgångskanal att testa</label>
                 <select id="outputChannelSelect">
@@ -1557,6 +1561,73 @@
       }
       
       logTA('Cykel-test av alla utgångar klart');
+    }
+    
+    // ----- Automated Audio Testing Functions -----
+    async function runAutomaticOutputTest() {
+      logTA('🤖 Startar automatiskt ljudtest av alla utgångskanaler...');
+      logTA('Detta test använder distinkta toner för varje kanal');
+      
+      try {
+        const response = await fetch('/api/test/output_channels', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          logTA('✅ Automatiskt test genomfört framgångsrikt!');
+          if (result.output) {
+            // Parse and display key parts of the output
+            const lines = result.output.split('\n');
+            lines.forEach(line => {
+              if (line.includes('TEST') || line.includes('✅') || line.includes('❌') || 
+                  line.includes('SUMMARY') || line.includes('Channel')) {
+                logTA(line);
+              }
+            });
+          }
+        } else {
+          logTA('❌ Automatiskt test misslyckades');
+          if (result.error) {
+            logTA(`Fel: ${result.error}`);
+          }
+        }
+        
+      } catch (error) {
+        logTA(`❌ Fel vid automatiskt test: ${error.message}`);
+      }
+    }
+    
+    async function generateTestAudio() {
+      logTA('🎵 Genererar testljudfiler...');
+      
+      try {
+        const response = await fetch('/api/test/generate_test_audio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          logTA('✅ Testljudfiler genererade framgångsrikt!');
+          logTA(`Skapade ${result.files.length} filer:`);
+          result.files.forEach(file => {
+            logTA(`  - ${file}`);
+          });
+          logTA('Filerna kan nu användas för manuell testning');
+        } else {
+          logTA('❌ Misslyckades att generera testljudfiler');
+          if (result.error) {
+            logTA(`Fel: ${result.error}`);
+          }
+        }
+        
+      } catch (error) {
+        logTA(`❌ Fel vid generering av testljud: ${error.message}`);
+      }
     }
   </script>
 </body>
