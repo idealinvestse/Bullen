@@ -62,6 +62,7 @@ JACK_FRAMES="${JACK_FRAMES:-128}"
 JACK_PERIODS="${JACK_PERIODS:-2}"
 USE_PW_JACK=0
 NO_JACK_START=0
+FIX_DBUS=0
 
 for arg in "$@"; do
   case "$arg" in
@@ -75,6 +76,7 @@ for arg in "$@"; do
     --config=*) BULLEN_CONFIG="${arg#*=}" ;;
     --backend=*) BACKEND="${arg#*=}" ;;
     --no-jack-start) NO_JACK_START=1 ;;
+    --fix-dbus) FIX_DBUS=1 ;;
     --jack-device=*) JACK_DEVICE="${arg#*=}" ;;
     --jack-rate=*) JACK_SR="${arg#*=}" ;;
     --jack-frames=*) JACK_FRAMES="${arg#*=}" ;;
@@ -97,6 +99,7 @@ install_apt() {
   local pkgs_common=(
     python3 python3-venv python3-pip
     libsndfile1-dev
+    dbus dbus-user-session
   )
   local pkgs_jack=(
     libjack-jackd2-dev jackd2 qjackctl
@@ -146,6 +149,72 @@ command_exists() { command -v "$1" >/dev/null 2>&1; }
 log_info() { echo "[INFO] $*"; }
 log_warn() { echo "[WARN] $*"; }
 log_error() { echo "[ERROR] $*"; }
+
+# Detect if a per-user D-Bus session is available and usable
+has_user_dbus() {
+  local uid; uid=$(id -u)
+  local rundir="${XDG_RUNTIME_DIR:-/run/user/$uid}"
+  [[ -S "$rundir/bus" ]]
+}
+
+# Ensure DBUS_SESSION_BUS_ADDRESS points to the user bus if it exists
+ensure_user_dbus_env() {
+  if ! has_user_dbus; then
+    return 1
+  fi
+  if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+    local uid; uid=$(id -u)
+    local rundir="${XDG_RUNTIME_DIR:-/run/user/$uid}"
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=${rundir}/bus"
+    log_info "Exported DBUS_SESSION_BUS_ADDRESS=${DBUS_SESSION_BUS_ADDRESS}"
+  fi
+  return 0
+}
+
+# Check and report system and user D-Bus availability
+check_dbus_status() {
+  local uid; uid=$(id -u)
+  local ok_sys=0 ok_user=0
+  if [[ -S /run/dbus/system_bus_socket ]]; then
+    ok_sys=1; log_info "System D-Bus: OK (/run/dbus/system_bus_socket)"
+  else
+    log_warn "System D-Bus: MISSING (/run/dbus/system_bus_socket not found)"
+  fi
+  if has_user_dbus; then
+    ok_user=1; log_info "User D-Bus: OK (/run/user/${uid}/bus)"
+  else
+    log_warn "User D-Bus: MISSING (/run/user/${uid}/bus not found)"
+  fi
+  # Try exporting session bus env if user bus exists
+  ensure_user_dbus_env || true
+  return $(( ok_sys==1 && ok_user==1 ? 0 : 1 ))
+}
+
+# Attempt to repair user D-Bus in headless setups
+repair_user_dbus() {
+  local uid; uid=$(id -u)
+  local user; user=$(id -un)
+  local SUDO; SUDO=$(need_sudo)
+  log_info "Attempting to repair user D-Bus for ${user} (uid ${uid})"
+  # Ensure runtime dir exists
+  if [[ ! -d "/run/user/${uid}" ]]; then
+    log_info "Enabling lingering for ${user} to allow user manager at boot"
+    $SUDO loginctl enable-linger "$user" || log_warn "loginctl enable-linger failed"
+  fi
+  # Try to start user services which also establish user D-Bus on modern systems
+  if command_exists systemctl; then
+    # Export XDG_RUNTIME_DIR if not set but path exists
+    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${uid}}"
+    if [[ -d "$XDG_RUNTIME_DIR" ]]; then
+      log_info "Using XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
+    fi
+    # Try to start PipeWire stack (often depends on user D-Bus)
+    systemctl --user enable --now pipewire.service 2>/dev/null || true
+    systemctl --user enable --now wireplumber.service 2>/dev/null || true
+  fi
+  # Re-check status after attempts
+  check_dbus_status || log_warn "User D-Bus still not available; you may need to relogin/reboot or install dbus-user-session"
+}
 
 jack_running() {
   if command_exists jack_lsp && jack_lsp >/dev/null 2>&1; then return 0; fi
@@ -201,10 +270,9 @@ start_jackd_alsa() {
 
 start_jackdbus() {
   if command_exists jack_control; then
-    # On headless systems without a user D-Bus session, jack_control will try to
-    # autolaunch via X11 and fail with "X11 initialization failed". Skip in that case.
-    if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-      log_warn "Skipping jackdbus start: no user D-Bus session detected"
+    # Require a valid per-user D-Bus; otherwise jack_control will fail (X11/autolaunch or no /run/user/$UID/bus)
+    if ! ensure_user_dbus_env; then
+      log_warn "Skipping jackdbus start: user D-Bus not available (no /run/user/$(id -u)/bus)"
       return 1
     fi
     log_info "Attempting to start JACK via jackdbus"
@@ -274,14 +342,14 @@ ensure_jack_server() {
   
   # Try ALSA jackd first
   if start_jackd_alsa; then return 0; fi
-  # Try jackdbus
-  if start_jackdbus; then return 0; fi
-  # PipeWire fallback: use pw-jack to wrap client
+  # Prefer PipeWire wrapper before jackdbus to avoid D-Bus/X11 issues on headless
   if command_exists pw-jack; then
-    log_warn "Falling back to PipeWire JACK wrapper (pw-jack). Not starting jackd."
+    log_warn "Using PipeWire JACK wrapper (pw-jack). Skipping jackd/jackdbus."
     USE_PW_JACK=1
     return 0
   fi
+  # Try jackdbus last (only works with a user D-Bus session)
+  if start_jackdbus; then return 0; fi
   # Last resort: dummy backend
   if start_jackd_dummy; then return 0; fi
   log_error "Unable to start or access any JACK server."
@@ -340,6 +408,10 @@ fi
 
 create_venv
 prep_dirs
+check_dbus_status || true
+if [[ "$FIX_DBUS" -eq 1 ]]; then
+  repair_user_dbus
+fi
 if [[ "${BACKEND,,}" == "jack" ]]; then
   verify_python_jack
 fi
