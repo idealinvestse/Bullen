@@ -103,44 +103,48 @@ def generate_channel_announcement(channel_num: int, duration: float = 1.0,
     
     return audio
 
-def create_test_audio_files(output_dir: Path, samplerate: int = 48000) -> List[Path]:
+def create_test_audio_files(output_dir: Path, samplerate: int = 48000) -> List[tuple]:
     """
-    Create test audio files for all 8 channels.
+    Create test audio files for all 8 output channels.
+    Each file is designed to test a specific output channel.
     
     Args:
         output_dir: Directory to save test files
         samplerate: Sample rate for audio files
     
     Returns:
-        List of created file paths
+        List of tuples (output_channel, filepath)
     """
     output_dir.mkdir(exist_ok=True)
     created_files = []
     
-    print("Generating test audio files...")
+    print("Generating test audio files for output channel testing...")
     
-    for channel in range(1, 9):
-        # Create distinctive audio for each channel
-        audio_data = generate_channel_announcement(channel, duration=3.0, samplerate=samplerate)
+    for output_channel in range(1, 9):
+        # Create distinctive audio for each output channel
+        audio_data = generate_channel_announcement(output_channel, duration=3.0, samplerate=samplerate)
         
         # Save as WAV file
-        filename = f"output_test_ch{channel}.wav"
+        filename = f"output_test_ch{output_channel}.wav"
         filepath = output_dir / filename
         sf.write(str(filepath), audio_data, samplerate)
-        created_files.append(filepath)
+        created_files.append((output_channel, filepath))
         
-        print(f"  Created {filename} - Channel {channel} test audio")
+        print(f"  Created {filename} - Output Channel {output_channel} test audio")
     
     return created_files
 
-def test_output_channel(channel: int, test_file: Path, server_url: str = "http://localhost:8000",
+def test_output_channel(output_channel: int, test_file: Path, server_url: str = "http://localhost:8000",
                        duration: float = 3.0) -> bool:
     """
-    Test a specific output channel using the Bullen API.
+    Test a specific output channel by playing distinctive audio through input channels.
+    
+    Since Bullen routes selected input to ALL outputs, we cycle through input channels
+    to ensure each output gets tested with the distinctive audio for that output.
     
     Args:
-        channel: Input channel to use (1-6)
-        test_file: Path to test audio file
+        output_channel: Output channel being tested (1-8)
+        test_file: Path to test audio file for this output
         server_url: Bullen server URL
         duration: How long to play the test
     
@@ -161,11 +165,12 @@ def test_output_channel(channel: int, test_file: Path, server_url: str = "http:/
         upload_result = response.json()
         uploaded_filename = upload_result['filename']
         
-        # Start playback on the specified input channel
-        print(f"  Starting playback on input channel {channel}")
+        # Use input channel 1 for all tests (since audio routes to all outputs anyway)
+        input_channel = 1
+        print(f"  Starting playback on input channel {input_channel} → Output {output_channel}")
         playback_data = {
             "file": upload_result['path'],
-            "input": channel,
+            "input": input_channel,
             "loop": False,
             "gain_db": 0
         }
@@ -182,15 +187,15 @@ def test_output_channel(channel: int, test_file: Path, server_url: str = "http:/
         print(f"    Playback started (PID: {playback_result.get('pid', 'unknown')})")
         
         # Select the input channel (routes to all 8 outputs)
-        response = requests.post(f"{server_url}/api/select/{channel}")
+        response = requests.post(f"{server_url}/api/select/{input_channel}")
         if response.ok:
-            print(f"    Selected input channel {channel} → All 8 outputs")
+            print(f"    Selected input channel {input_channel} → All 8 outputs (testing output {output_channel})")
         
         # Wait for playback duration
         time.sleep(duration)
         
         # Stop playback
-        stop_data = {"input": channel}
+        stop_data = {"input": input_channel}
         response = requests.post(f"{server_url}/api/tools/feed/stop",
                                json=stop_data,
                                headers={'Content-Type': 'application/json'})
@@ -201,7 +206,7 @@ def test_output_channel(channel: int, test_file: Path, server_url: str = "http:/
         return True
         
     except Exception as e:
-        print(f"    Error testing channel {channel}: {e}")
+        print(f"    Error testing output channel {output_channel}: {e}")
         return False
 
 def run_comprehensive_output_test(server_url: str = "http://localhost:8000",
@@ -235,14 +240,17 @@ def run_comprehensive_output_test(server_url: str = "http://localhost:8000",
     success_count = 0
     total_tests = 8  # We have 8 output channels to test
     
-    for i, (channel, filename) in enumerate(test_files, 1):
-        print(f"\n--- TEST {i}/8: Channel {channel} ---")
-        success = test_output_channel(channel, filename, server_url, test_duration)
-        if success:
-            success_count += 1
-            print("   ✅ Test completed successfully")
-        else:
-            print("   ❌ Test failed")
+    for i, (output_channel, filename) in enumerate(test_files, 1):
+        print(f"\n--- TEST {i}/8: Output Channel {output_channel} ---")
+        try:
+            success = test_output_channel(output_channel, filename, server_url, test_duration)
+            if success:
+                success_count += 1
+                print("   ✅ Test completed successfully")
+            else:
+                print("   ❌ Test failed")
+        except Exception as e:
+            print(f"   ❌ Test failed: {e}")
         
         if i < total_tests:
             print(f"   Pausing {pause_between}s before next test...")
