@@ -56,7 +56,7 @@ BULLEN_CONFIG="${BULLEN_CONFIG:-$DEFAULT_CONFIG}"
 BACKEND="${BULLEN_BACKEND:-jack}"
 
 # JACK configuration defaults (can be overridden via flags or env)
-JACK_DEVICE="${JACK_DEVICE:-hw:0}"
+JACK_DEVICE="${JACK_DEVICE:-auto}"
 JACK_SR="${JACK_SR:-48000}"
 JACK_FRAMES="${JACK_FRAMES:-128}"
 JACK_PERIODS="${JACK_PERIODS:-2}"
@@ -164,9 +164,25 @@ wait_for_jack() {
 pick_default_alsa_device() {
   local dev="hw:0"
   if command_exists aplay; then
-    local card
-    card=$(aplay -l 2>/dev/null | awk '/^card [0-9]+:/{print $2}' | sed 's/,//' | head -n1)
-    if [[ -n "$card" ]]; then dev="hw:${card}"; fi
+    # Prefer Audio Injector Octo (or similar) if present; otherwise use first card index
+    local preferred
+    preferred=$(aplay -l 2>/dev/null | awk '/^card [0-9]+:/{print tolower($0)}' | grep -m1 -E 'audioinjector|octo|cs42|cs42448' || true)
+    if [[ -n "$preferred" ]]; then
+      # Extract the numeric card index after "card " and before ':'
+      local idx
+      idx=$(printf '%s\n' "$preferred" | sed -n 's/^card \([0-9][0-9]*\):.*/\1/p' | head -n1)
+      if [[ -n "$idx" ]]; then
+        dev="hw:${idx}"
+      fi
+    fi
+    if [[ "$dev" == "hw:0" ]]; then
+      # Fallback: first card index from aplay -l
+      local first
+      first=$(aplay -l 2>/dev/null | sed -n 's/^card \([0-9][0-9]*\):.*/\1/p' | head -n1)
+      if [[ -n "$first" ]]; then
+        dev="hw:${first}"
+      fi
+    fi
   fi
   echo "$dev"
 }
@@ -185,6 +201,12 @@ start_jackd_alsa() {
 
 start_jackdbus() {
   if command_exists jack_control; then
+    # On headless systems without a user D-Bus session, jack_control will try to
+    # autolaunch via X11 and fail with "X11 initialization failed". Skip in that case.
+    if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+      log_warn "Skipping jackdbus start: no user D-Bus session detected"
+      return 1
+    fi
     log_info "Attempting to start JACK via jackdbus"
     jack_control start || true
     if wait_for_jack 20 0.5; then return 0; fi
