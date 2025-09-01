@@ -98,6 +98,9 @@ class AudioEngine:
         self.vu_peak = np.zeros(self.num_inputs, dtype=np.float32)
         # RMS values for VU meters
         self.vu_rms = np.zeros(self.num_inputs, dtype=np.float32)
+        # Temporary buffers for VU updates to avoid RT thread locking
+        self._vu_peak_temp = np.zeros(self.num_inputs, dtype=np.float32)
+        self._vu_rms_temp = np.zeros(self.num_inputs, dtype=np.float32)
         # Last time VU meters were updated
         self._last_vu_time = 0.0
 
@@ -265,10 +268,10 @@ class AudioEngine:
             # Avoid heavy ops if frames is 0
             if frames > 0:
                 # Calculate peak value (maximum absolute amplitude)
-                self.vu_peak[i] = float(np.max(np.abs(post_gain)))
+                self._vu_peak_temp[i] = float(np.max(np.abs(post_gain)))
                 # Calculate RMS value (root mean square)
                 # RMS
-                self.vu_rms[i] = float(np.sqrt(np.mean(post_gain * post_gain)))
+                self._vu_rms_temp[i] = float(np.sqrt(np.mean(post_gain * post_gain)))
             # If this is the selected channel, prepare it for routing
             if i == sel:
                 route_buf = buf if g == 0.0 else post_gain
@@ -300,8 +303,16 @@ class AudioEngine:
                     self._rec_queues[i].put_nowait(raw)
                 except queue.Full:
                     # If queue is full, increment drop counter
-                    self._rec_drop_counts[i] += 1
+                    # Using atomic operation for thread safety
+                    with self._lock:
+                        self._rec_drop_counts[i] += 1
 
+        # Copy VU temp buffers to main buffers with minimal locking
+        # This avoids holding lock during computation in RT thread
+        with self._lock:
+            self.vu_peak[:] = self._vu_peak_temp
+            self.vu_rms[:] = self._vu_rms_temp
+        
         # Update last VU time
         self._last_vu_time = time.time()
 
@@ -379,7 +390,8 @@ class AudioEngine:
         for i in range(self.num_inputs):
             ch_path = session_dir / f'channel_{i + 1}.wav'
             # Create thread for recording worker
-            t = threading.Thread(target=self._rec_worker, args=(i, ch_path), daemon=True)
+            # Not using daemon=True to ensure proper buffer flushing on shutdown
+            t = threading.Thread(target=self._rec_worker, args=(i, ch_path), daemon=False)
             self._rec_threads.append(t)
             t.start()
         # Mark recording as started
