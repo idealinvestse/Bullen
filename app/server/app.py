@@ -1,14 +1,19 @@
-import asyncio
 import sys
 import subprocess
 from pathlib import Path
 from typing import Dict, Any, Set, List
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.staticfiles import StaticFiles
-
-import contextlib
+from fastapi.responses import RedirectResponse, JSONResponse
+import asyncio
+import json
+import logging
+import shutil
+import tempfile
+import soundfile as sf
+import uuid
+from contextlib import asynccontextmanager
 from scripts.make_test_wavs import make_tone  # reuse tone writer
 
 
@@ -277,6 +282,145 @@ def create_app(engine: Any) -> FastAPI:
             if not alive:
                 app.state.feed_procs.pop(ch, None)
         return {"status": status}
+
+    # -------- Audio File Upload --------
+
+    @app.post("/api/upload/audio")
+    async def upload_audio_file(file: UploadFile = File(...)):
+        """
+        Upload an audio file and convert it to mono WAV format.
+        
+        Args:
+            file: The uploaded audio file
+            
+        Returns:
+            JSON response with file information
+        """
+        # Check file extension
+        allowed_extensions = {'.wav', '.mp3', '.ogg', '.flac', '.m4a', '.aac'}
+        file_ext = Path(file.filename).suffix.lower()
+        
+        if file_ext not in allowed_extensions:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Unsupported file format. Allowed: {', '.join(allowed_extensions)}"
+            )
+        
+        # Create uploads directory
+        root = _project_root()
+        uploads_dir = root / "uploads"
+        uploads_dir.mkdir(exist_ok=True)
+        
+        # Generate unique filename
+        unique_id = str(uuid.uuid4())[:8]
+        original_name = Path(file.filename).stem
+        output_filename = f"{original_name}_{unique_id}.wav"
+        output_path = uploads_dir / output_filename
+        
+        try:
+            # Save uploaded file to temporary location
+            with tempfile.NamedTemporaryFile(delete=False, suffix=file_ext) as temp_file:
+                shutil.copyfileobj(file.file, temp_file)
+                temp_path = temp_file.name
+            
+            # Read audio file and convert to mono WAV
+            data, samplerate = sf.read(temp_path)
+            
+            # Convert to mono if stereo
+            if len(data.shape) > 1:
+                data = data.mean(axis=1)
+            
+            # Write as mono WAV
+            sf.write(str(output_path), data, samplerate)
+            
+            # Clean up temp file
+            Path(temp_path).unlink()
+            
+            # Get file info
+            duration = len(data) / samplerate
+            
+            return {
+                "filename": output_filename,
+                "original_name": file.filename,
+                "path": str(output_path.relative_to(root)),
+                "duration": duration,
+                "samplerate": samplerate,
+                "channels": 1
+            }
+            
+        except Exception as e:
+            # Clean up on error
+            if 'temp_path' in locals():
+                Path(temp_path).unlink(missing_ok=True)
+            output_path.unlink(missing_ok=True)
+            raise HTTPException(status_code=500, detail=f"Error processing audio file: {str(e)}")
+
+    @app.get("/api/upload/list")
+    def list_uploaded_files():
+        """
+        List all uploaded audio files with metadata.
+        
+        Returns:
+            JSON response with list of uploaded files
+        """
+        root = _project_root()
+        uploads_dir = root / "uploads"
+        
+        if not uploads_dir.exists():
+            return {"files": []}
+        
+        files = []
+        for wav_file in uploads_dir.glob("*.wav"):
+            try:
+                # Get audio file info
+                data, samplerate = sf.read(str(wav_file))
+                duration = len(data) / samplerate
+                channels = 1 if len(data.shape) == 1 else data.shape[1]
+                
+                files.append({
+                    "filename": wav_file.name,
+                    "path": str(wav_file.relative_to(root)),
+                    "duration": duration,
+                    "samplerate": samplerate,
+                    "channels": channels
+                })
+            except Exception:
+                # Skip files that can't be read
+                continue
+        
+        # Sort by filename
+        files.sort(key=lambda x: x["filename"])
+        return {"files": files}
+
+    @app.delete("/api/upload/{filename}")
+    def delete_uploaded_file(filename: str):
+        """
+        Delete an uploaded audio file.
+        
+        Args:
+            filename: Name of the file to delete
+            
+        Returns:
+            JSON response confirming deletion
+        """
+        root = _project_root()
+        uploads_dir = root / "uploads"
+        file_path = uploads_dir / filename
+        
+        # Security check - ensure file is in uploads directory
+        try:
+            file_path.resolve().relative_to(uploads_dir.resolve())
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid file path")
+        
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        try:
+            file_path.unlink()
+            return {"ok": True, "deleted": filename}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Error deleting file: {str(e)}")
 
     # -------- WebSocket for VU --------
 
