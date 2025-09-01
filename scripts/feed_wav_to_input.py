@@ -85,7 +85,8 @@ def main() -> None:
         data = data.mean(axis=1).astype(np.float32)
     data = data.astype(np.float32, copy=False)
 
-    with jack.Client(args.client_name, no_start_server=False) as client:
+    client = jack.Client(args.client_name, no_start_server=False)
+    try:
         jack_sr = client.samplerate
         x = simple_resample(data, sr, jack_sr)
         if args.gain_db != 0.0:
@@ -149,8 +150,15 @@ def main() -> None:
                 time.sleep(0.2)
         except KeyboardInterrupt:
             pass
-
-        client.deactivate()
+    finally:
+        try:
+            client.deactivate()
+        except Exception:
+            pass
+        try:
+            client.close()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':
