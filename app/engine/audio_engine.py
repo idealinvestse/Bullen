@@ -312,9 +312,14 @@ class AudioEngine:
         # Connect physical capture ports to our inports
         # Get all physical output ports (these are the capture ports from audio devices)
         cap_ports = self.client.get_ports(is_output=True, is_physical=True)
-        # Filter by name match
-        # Only keep ports that match our capture_match string or contain 'capture'
-        cap_ports = [p for p in cap_ports if self.capture_match in p.name.lower() or 'capture' in p.name.lower()]
+        # Filter by name match - Audio Injector Octo compatibility
+        # Look for Audio Injector Octo ports first, then fallback to generic matches
+        octo_ports = [p for p in cap_ports if 'audioinjector' in p.name.lower() or 'octo' in p.name.lower()]
+        if octo_ports:
+            cap_ports = octo_ports
+        else:
+            # Fallback to configured match or generic 'capture'
+            cap_ports = [p for p in cap_ports if self.capture_match in p.name.lower() or 'capture' in p.name.lower()]
         # Fallback to any outputs if filter too strict
         # If we don't have enough matching ports, get all output ports
         if len(cap_ports) < self.num_inputs:
@@ -333,20 +338,25 @@ class AudioEngine:
         """
         # Get all physical input ports (these are the playback ports to audio devices)
         pb_ports = self.client.get_ports(is_input=True, is_physical=True)
-        # Filter by name match
-        # Only keep ports that match our playback_match string or contain 'playback'
-        pb_ports = [p for p in pb_ports if self.playback_match in p.name.lower() or 'playback' in p.name.lower()]
+        # Filter by name match - Audio Injector Octo compatibility
+        # Look for Audio Injector Octo ports first, then fallback to generic matches
+        octo_ports = [p for p in pb_ports if 'audioinjector' in p.name.lower() or 'octo' in p.name.lower()]
+        if octo_ports:
+            pb_ports = octo_ports
+        else:
+            # Fallback to configured match or generic 'playback'
+            pb_ports = [p for p in pb_ports if self.playback_match in p.name.lower() or 'playback' in p.name.lower()]
+        
         # Fallback to any inputs if filter too strict
-        if len(pb_ports) < 2:
+        if len(pb_ports) < self.num_outputs:
             pb_ports = self.client.get_ports(is_input=True)
-        # Connect our L/R to first two playback ports
-        # Only connect if we have at least 2 playback ports
-        if len(pb_ports) >= 2:
+        
+        # Connect our outputs to available playback ports
+        # For Audio Injector Octo, we want to connect all 8 outputs
+        num_connections = min(self.num_outputs, len(pb_ports))
+        for i in range(num_connections):
             try:
-                # Connect left output to first playback port
-                self.client.connect(self.outports[0], pb_ports[0])
-                # Connect right output to second playback port
-                self.client.connect(self.outports[1], pb_ports[1])
+                self.client.connect(self.outports[i], pb_ports[i])
             except jack.JackError:
                 # Ignore connection errors
                 pass
