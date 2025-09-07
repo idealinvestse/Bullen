@@ -545,7 +545,10 @@ def create_app(engine: Any) -> FastAPI:
             while True:
                 # 20 Hz updates (50ms interval)
                 await asyncio.sleep(0.05)
-                # Get current engine state
+                # Skip if no clients connected
+                if not app.state.clients:
+                    continue
+                # Get current engine state only when there are clients
                 state = engine.get_state()
                 # Prepare payload for VU meter updates
                 payload = {
@@ -555,9 +558,6 @@ def create_app(engine: Any) -> FastAPI:
                     "mutes": state["mutes"],
                     "gains_db": state["gains_db"],
                 }
-                # Skip if no clients connected
-                if not app.state.clients:
-                    continue
                 # Track dead connections
                 dead = []
                 # Send updates to all clients

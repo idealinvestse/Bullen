@@ -7,12 +7,14 @@ from typing import List, Dict
 
 import numpy as np
 import soundfile as sf
+import logging
 
 try:
     import jack  # Provided by JACK-Client package
 except Exception:  # pragma: no cover
     jack = None
 
+logger = logging.getLogger(__name__)
 
 class AudioEngine:
     """
@@ -21,7 +23,7 @@ class AudioEngine:
 
     Notes:
     - Inports: 6 mono inputs registered as 'in_1'..'in_6'. Connect from device capture ports.
-    - Outports: 2 mono outputs 'out_l', 'out_r'. Connect to playback/headset.
+    - Outports: dynamic (2 or N from config). Ports are named 'out_l', 'out_r', then 'out_3'..'out_N'.
     - Recording: raw input (pre-mute, pre-gain) to WAV per channel to avoid destructive changes.
       Can be adjusted via config if post-gain needed.
     - VU: computed post-gain, pre-routing per process cycle; server samples at ~20 Hz.
@@ -52,6 +54,8 @@ class AudioEngine:
         self.record_enabled = bool(config.get('record', True))
         # Directory where recordings will be saved
         self.record_dir = Path(config.get('recordings_dir', 'recordings'))
+        # Size of recording queues (configurable for memory/performance balance)
+        self.record_queue_size = max(16, int(config.get('record_queue_size', 64)))
         # Enable/disable automatic connection of input ports
         self.auto_connect_capture = bool(config.get('auto_connect_capture', True))
         # Enable/disable automatic connection of output ports
@@ -100,28 +104,34 @@ class AudioEngine:
         self.vu_rms = np.zeros(self.num_inputs, dtype=np.float32)
         # Peak tracking buffers (updated in RT thread) - lightweight tracking only
         self._vu_peak_temp = np.zeros(self.num_inputs, dtype=np.float32)
-        # RMS calculation buffers (updated at ~20 Hz) - heavy computation moved out of RT
-        self._vu_rms_temp = np.zeros(self.num_inputs, dtype=np.float32)
+        # Accumulators for RMS calculation outside RT thread
+        self._vu_sumsq_temp = np.zeros(self.num_inputs, dtype=np.float64)
+        self._vu_count_temp = np.zeros(self.num_inputs, dtype=np.int64)
+        self._vu_stats_lock = threading.Lock()
+        # Lock for publishing VU arrays independently of main state lock
+        self._vu_pub_lock = threading.Lock()
         # VU sampling control
         self._last_vu_time = 0.0
+        # VU smoothing factors (exponential smoothing for stable display)
+        self._vu_peak_smooth = np.zeros(self.num_inputs, dtype=np.float32)
+        self._vu_rms_smooth = np.zeros(self.num_inputs, dtype=np.float32)
+        self._vu_smooth_alpha = 0.3  # Smoothing factor (0.0 = no smoothing, 1.0 = instant)
         # VU sampling thread
-        self._vu_thread: threading.Thread = None
+        self._vu_thread: threading.Thread | None = None
         # VU sampling stop event
         self._vu_stop = threading.Event()
         # VU sampling started flag
         self._vu_started = False
 
         # Recording (raw input) - improved queue size for better reliability
-        # Queues for each channel's recording data (increased size for better reliability)
-        self._rec_queues: List[queue.Queue] = [queue.Queue(maxsize=128) for _ in range(self.num_inputs)]
+        # Queues for each channel's recording data (configurable size for memory/performance balance)
+        self._rec_queues: List[queue.Queue] = [queue.Queue(maxsize=self.record_queue_size) for _ in range(self.num_inputs)]
         # Thread objects for recording workers
         self._rec_threads: List[threading.Thread] = []
         # Event to signal recording threads to stop
         self._rec_stop = threading.Event()
         # Count of dropped buffers for each channel (improved tracking)
         self._rec_drop_counts = np.zeros(self.num_inputs, dtype=np.int64)
-        # Additional statistics for monitoring queue health
-        self._rec_queue_sizes = np.zeros(self.num_inputs, dtype=np.int32)
         # Flag indicating if recording threads have been started
         self._rec_started = False
 
@@ -163,12 +173,14 @@ class AudioEngine:
                 self._rec_stop.set()
                 for t in self._rec_threads:
                     t.join(timeout=3)
+                self._rec_started = False
 
             # Stop VU sampling thread if it was started
             if self._vu_started:
                 self._vu_stop.set()
                 if self._vu_thread:
                     self._vu_thread.join(timeout=1)
+                self._vu_started = False
         finally:
             # Deactivate and close JACK client
             self.client.deactivate()
@@ -232,30 +244,34 @@ class AudioEngine:
         Returns:
             Dict: Dictionary containing current engine state
         """
-        # Use lock to safely access shared state
+        # Read main state under main lock
         with self._lock:
-            return {
-                # Actual sample rate from JACK client
-                'samplerate': self.client.samplerate,
-                # Actual buffer size from JACK client
-                'frames_per_period': self.client.blocksize,
-                # Currently selected channel (1-based index)
-                'selected_channel': int(self.selected_ch + 1),
-                # Gain values in linear scale
-                'gains_linear': self.gains.tolist(),
-                # Gain values in decibels
-                'gains_db': [linear_to_db(g) for g in self.gains],
-                # Mute status for each channel
-                'mutes': self.mutes.astype(bool).tolist(),
-                # Peak values for VU meters
-                'vu_peak': self.vu_peak.tolist(),
-                # RMS values for VU meters
-                'vu_rms': self.vu_rms.tolist(),
-                # Recording status
-                'recording': bool(self.record_enabled),
-                # Count of dropped buffers for each channel
-                'rec_dropped_buffers': self._rec_drop_counts.tolist(),
-            }
+            sr = self.client.samplerate
+            bs = self.client.blocksize
+            sel_ch = int(self.selected_ch + 1)
+            gains_linear = self.gains.tolist()
+            gains_db = [linear_to_db(g) for g in self.gains]
+            mutes = self.mutes.astype(bool).tolist()
+            recording = bool(self.record_enabled)
+            drops = self._rec_drop_counts.tolist()
+
+        # Read VU arrays under dedicated VU lock (no main lock held)
+        with self._vu_pub_lock:
+            vu_peak = self.vu_peak.tolist()
+            vu_rms = self.vu_rms.tolist()
+
+        return {
+            'samplerate': sr,
+            'frames_per_period': bs,
+            'selected_channel': sel_ch,
+            'gains_linear': gains_linear,
+            'gains_db': gains_db,
+            'mutes': mutes,
+            'vu_peak': vu_peak,
+            'vu_rms': vu_rms,
+            'recording': recording,
+            'rec_dropped_buffers': drops,
+        }
 
     # --------------- Internal ---------------
 
@@ -285,15 +301,22 @@ class AudioEngine:
             g = 0.0 if mutes[i] else gains[i]
             post_gain = buf * g
             # Update peak tracking only (lightweight operation for RT thread)
-            # RMS calculation moved to separate thread for ~20 Hz sampling
+            # RMS accumulation moved to separate thread for ~20 Hz sampling
             if frames > 0:
                 # Track peak value (simple absolute value max)
                 current_peak = float(np.max(np.abs(post_gain)))
                 # Keep the highest peak since last VU update
                 self._vu_peak_temp[i] = max(self._vu_peak_temp[i], current_peak)
-            # If this is the selected channel, prepare it for routing
+                # Accumulate sum of squares and sample count using try-lock to avoid blocking RT
+                if self._vu_stats_lock.acquire(False):
+                    try:
+                        self._vu_sumsq_temp[i] += float(np.dot(post_gain, post_gain))
+                        self._vu_count_temp[i] += frames
+                    finally:
+                        self._vu_stats_lock.release()
+            # If this is the selected channel, prepare it for routing (respect mute -> silence)
             if i == sel:
-                route_buf = buf if g == 0.0 else post_gain
+                route_buf = post_gain
 
         # Route selected channel to output
         if route_buf is None:
@@ -320,15 +343,10 @@ class AudioEngine:
                 try:
                     # Try to add buffer to recording queue
                     self._rec_queues[i].put_nowait(raw)
-                    # Update queue size tracking for monitoring
-                    self._rec_queue_sizes[i] = self._rec_queues[i].qsize()
                 except queue.Full:
-                    # If queue is full, increment drop counter
-                    # Using atomic operation for thread safety
+                    # If queue is full, increment drop counter (no logging in RT thread)
                     with self._lock:
                         self._rec_drop_counts[i] += 1
-                        # Log queue overflow for debugging (non-blocking)
-                        print(f"Recording queue overflow on channel {i+1}: {self._rec_drop_counts[i]} drops")
 
     def _auto_connect_inputs(self):
         """
@@ -345,11 +363,11 @@ class AudioEngine:
 
                 if not cap_ports:
                     if attempt < max_retries - 1:
-                        print(f"No capture ports found, retrying in {retry_delay}s... (attempt {attempt + 1}/{max_retries})")
+                        logger.warning("No capture ports found, retrying in %ss... (attempt %s/%s)", retry_delay, attempt + 1, max_retries)
                         time.sleep(retry_delay)
                         continue
                     else:
-                        print("Warning: No physical capture ports found after retries")
+                        logger.warning("No physical capture ports found after retries")
                         return
 
                 # Filter by name match - Audio Injector Octo compatibility
@@ -357,16 +375,16 @@ class AudioEngine:
                 octo_ports = [p for p in cap_ports if 'audioinjector' in p.name.lower() or 'octo' in p.name.lower()]
                 if octo_ports:
                     cap_ports = octo_ports
-                    print(f"Found {len(octo_ports)} Audio Injector Octo capture ports")
+                    logger.info("Found %s Audio Injector Octo capture ports", len(octo_ports))
                 else:
                     # Fallback to configured match or generic 'capture'
                     cap_ports = [p for p in cap_ports if self.capture_match in p.name.lower() or 'capture' in p.name.lower()]
-                    print(f"Using {len(cap_ports)} generic capture ports (match: '{self.capture_match}')")
+                    logger.info("Using %s generic capture ports (match: '%s')", len(cap_ports), self.capture_match)
 
                 # Fallback to any outputs if filter too strict
                 # If we don't have enough matching ports, get all output ports
                 if len(cap_ports) < self.num_inputs:
-                    print(f"Warning: Only {len(cap_ports)} capture ports available, need {self.num_inputs}")
+                    logger.warning("Only %s capture ports available, need %s", len(cap_ports), self.num_inputs)
                     cap_ports = self.client.get_ports(is_output=True)
 
                 # Connect matching ports to our input ports
@@ -375,19 +393,47 @@ class AudioEngine:
                     try:
                         self.client.connect(cap_ports[i], self.inports[i])
                         connections_made += 1
-                        print(f"Connected capture port '{cap_ports[i].name}' to input {i+1}")
+                        logger.info("Connected capture port '%s' to input %s", cap_ports[i].name, i + 1)
                     except jack.JackError as e:
-                        print(f"Failed to connect capture port '{cap_ports[i].name}' to input {i+1}: {e}")
+                        logger.error("Failed to connect capture port '%s' to input %s: %s", cap_ports[i].name, i + 1, e)
 
-                print(f"Successfully connected {connections_made}/{self.num_inputs} capture ports")
+                logger.info("Successfully connected %s/%s capture ports", connections_made, self.num_inputs)
                 return  # Success, exit retry loop
 
             except Exception as e:
-                print(f"Error during capture port connection (attempt {attempt + 1}/{max_retries}): {e}")
+                logger.error("Error during capture port connection (attempt %s/%s): %s", attempt + 1, max_retries, e)
                 if attempt < max_retries - 1:
                     time.sleep(retry_delay)
                 else:
-                    print("Warning: Failed to connect capture ports after all retries")
+                    logger.warning("Failed to connect capture ports after all retries")
+
+    def _auto_connect_outputs(self):
+        """
+        Automatically connect our output ports to physical playback ports based on name matching.
+        """
+        # Get all physical input ports (these are the playback ports to audio devices)
+        pb_ports = self.client.get_ports(is_input=True, is_physical=True)
+        # Filter by name match - Audio Injector Octo compatibility
+        # Look for Audio Injector Octo ports first, then fallback to generic matches
+        octo_ports = [p for p in pb_ports if 'audioinjector' in p.name.lower() or 'octo' in p.name.lower()]
+        if octo_ports:
+            pb_ports = octo_ports
+        else:
+            # Fallback to configured match or generic 'playback'
+            pb_ports = [p for p in pb_ports if self.playback_match in p.name.lower() or 'playback' in p.name.lower()]
+        
+        # Fallback to any inputs if filter too strict
+        if len(pb_ports) < self.num_outputs:
+            pb_ports = self.client.get_ports(is_input=True)
+        
+        # Connect our outputs to available playback ports
+        num_connections = min(self.num_outputs, len(pb_ports))
+        for i in range(num_connections):
+            try:
+                self.client.connect(self.outports[i], pb_ports[i])
+            except jack.JackError:
+                # Ignore connection errors
+                pass
 
     def _start_vu_thread(self):
         """
@@ -414,39 +460,81 @@ class AudioEngine:
                 # Sleep for VU sampling interval
                 time.sleep(vu_interval)
 
-                # Acquire state snapshot without blocking RT thread long
-                with self._lock:
-                    # Copy peak tracking buffers for processing
-                    peak_temp = self._vu_peak_temp.copy()
+                # Copy peak tracking buffers for processing (no main-state lock to avoid contention)
+                peak_temp = self._vu_peak_temp.copy()
 
-                # Perform heavy VU calculations outside RT thread
+                # Snapshot and reset accumulators for RMS outside RT thread
+                with self._vu_stats_lock:
+                    sumsq = self._vu_sumsq_temp.copy()
+                    counts = self._vu_count_temp.copy()
+                    self._vu_sumsq_temp.fill(0.0)
+                    self._vu_count_temp.fill(0)
+
+                # Compute RMS using accumulated sums
                 rms_values = np.zeros(self.num_inputs, dtype=np.float32)
-
-                # Calculate RMS for each channel if we have audio data
-                # Note: In a real implementation, we'd need to accumulate audio data
-                # over multiple JACK callbacks to calculate proper RMS
-                # For now, we'll use a simplified approach
-                for i in range(self.num_inputs):
-                    # Simplified RMS calculation - in practice you'd accumulate samples
-                    # This is a placeholder for the actual RMS calculation logic
-                    rms_values[i] = peak_temp[i] * 0.707  # Rough approximation
+                nz = counts > 0
+                if np.any(nz):
+                    rms_values[nz] = np.sqrt((sumsq[nz] / counts[nz]).astype(np.float32))
 
                 # Update VU values with calculated data
-                with self._lock:
-                    # Copy calculated values to main VU buffers
-                    self.vu_peak[:] = peak_temp
-                    self.vu_rms[:] = rms_values
-                    # Reset peak tracking for next sampling period
-                    self._vu_peak_temp.fill(0.0)
+                # Apply exponential smoothing and publish VU values (no main-state lock)
+                self._vu_peak_smooth = self._vu_smooth_alpha * peak_temp + (1 - self._vu_smooth_alpha) * self._vu_peak_smooth
+                self._vu_rms_smooth = self._vu_smooth_alpha * rms_values + (1 - self._vu_smooth_alpha) * self._vu_rms_smooth
+                # Publish smoothed values under VU publication lock
+                with self._vu_pub_lock:
+                    self.vu_peak[:] = self._vu_peak_smooth
+                    self.vu_rms[:] = self._vu_rms_smooth
+                # Reset peak tracking for next sampling period
+                self._vu_peak_temp.fill(0.0)
 
                 # Update timing
                 self._last_vu_time = time.time()
 
             except Exception as e:
                 # Log error but continue VU sampling
-                print(f"VU worker error: {e}")
+                logger.exception("VU worker error: %s", e)
                 continue
 
+
+    def _start_recording_threads(self):
+        """
+        Start recording threads for each input channel.
+        """
+        # Create directory per run
+        ts = time.strftime('%Y%m%d_%H%M%S')
+        session_dir = self.record_dir / ts
+        session_dir.mkdir(parents=True, exist_ok=True)
+
+        # Clear stop event and reset threads list
+        self._rec_stop.clear()
+        self._rec_threads = []
+
+        # Start a recording thread for each input channel
+        for i in range(self.num_inputs):
+            ch_path = session_dir / f'channel_{i + 1}.wav'
+            # Not using daemon=True to ensure proper buffer flushing on shutdown
+            t = threading.Thread(target=self._rec_worker, args=(i, ch_path), daemon=False)
+            self._rec_threads.append(t)
+            t.start()
+
+        # Mark recording as started
+        self._rec_started = True
+
+    def _rec_worker(self, ch_index: int, path: Path):
+        """
+        Worker function for recording audio from a specific channel.
+        """
+        with sf.SoundFile(str(path), mode='w', samplerate=self.client.samplerate, channels=1, subtype='PCM_24', format='WAV') as f:
+            while not self._rec_stop.is_set():
+                try:
+                    block = self._rec_queues[ch_index].get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                # Ensure shape (n, 1) for proper WAV file format
+                if block.ndim == 1:
+                    f.write(block.reshape(-1, 1))
+                else:
+                    f.write(block)
 
 # --------------- Utils ---------------
 

@@ -16,12 +16,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "nperiods": 2,                 # informative; tune JACK separately
     # Number of input channels
     "inputs": 6,
-    # Number of output channels
-    "outputs": 2,
+    # Number of output channels (Octo default)
+    "outputs": 8,
     # Enable/disable recording functionality
     "record": True,
     # Directory where recordings will be saved
     "recordings_dir": "recordings",
+    # Size of per-channel recording queues (frames buffers)
+    "record_queue_size": 64,
     # Enable/disable automatic connection of input ports
     "auto_connect_capture": True,
     # Enable/disable automatic connection of output ports
@@ -32,6 +34,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "playback_match": "playback",
     # Initially selected channel (1-based index)
     "selected_channel": 1,
+    # Logging level (DEBUG, INFO, WARNING, ERROR)
+    "log_level": "INFO",
 }
 
 
@@ -72,5 +76,44 @@ def load_config(path: str | None = None) -> Dict[str, Any]:
                 # Only update if data is a dictionary
                 if isinstance(data, dict):
                     cfg.update(data)
-    # Return final configuration
+    # Validate and normalize config
+    return _validate_config(cfg)
+
+
+def _validate_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Validate and normalize configuration values.
+    Clamps out-of-range values to safe ranges.
+    """
+    def _as_int(x: Any, default: int) -> int:
+        try:
+            return int(x)
+        except Exception:
+            return int(default)
+
+    # inputs: at least 1
+    cfg["inputs"] = max(1, _as_int(cfg.get("inputs", DEFAULT_CONFIG["inputs"]), DEFAULT_CONFIG["inputs"]))
+    # outputs: at least 2, cap at 8 for Octo (but keep generic)
+    cfg["outputs"] = min(8, max(2, _as_int(cfg.get("outputs", DEFAULT_CONFIG["outputs"]), DEFAULT_CONFIG["outputs"])) )
+    # selected_channel: clamp to [1..inputs]
+    sel = _as_int(cfg.get("selected_channel", DEFAULT_CONFIG["selected_channel"]), DEFAULT_CONFIG["selected_channel"])
+    cfg["selected_channel"] = min(cfg["inputs"], max(1, sel))
+    # record_queue_size: clamp [16..4096]
+    rqs = _as_int(cfg.get("record_queue_size", DEFAULT_CONFIG["record_queue_size"]), DEFAULT_CONFIG["record_queue_size"])
+    cfg["record_queue_size"] = min(4096, max(16, rqs))
+    # booleans
+    cfg["record"] = bool(cfg.get("record", DEFAULT_CONFIG["record"]))
+    cfg["auto_connect_capture"] = bool(cfg.get("auto_connect_capture", DEFAULT_CONFIG["auto_connect_capture"]))
+    cfg["auto_connect_playback"] = bool(cfg.get("auto_connect_playback", DEFAULT_CONFIG["auto_connect_playback"]))
+    # strings
+    cfg["recordings_dir"] = str(cfg.get("recordings_dir", DEFAULT_CONFIG["recordings_dir"]))
+    cfg["capture_match"] = str(cfg.get("capture_match", DEFAULT_CONFIG["capture_match"]))
+    cfg["playback_match"] = str(cfg.get("playback_match", DEFAULT_CONFIG["playback_match"]))
+    # log level
+    lvl = str(cfg.get("log_level", DEFAULT_CONFIG["log_level"]))
+    cfg["log_level"] = lvl.upper()
+    # informative ints
+    cfg["samplerate"] = _as_int(cfg.get("samplerate", DEFAULT_CONFIG["samplerate"]), DEFAULT_CONFIG["samplerate"])
+    cfg["frames_per_period"] = _as_int(cfg.get("frames_per_period", DEFAULT_CONFIG["frames_per_period"]), DEFAULT_CONFIG["frames_per_period"]) 
+    cfg["nperiods"] = _as_int(cfg.get("nperiods", DEFAULT_CONFIG["nperiods"]), DEFAULT_CONFIG["nperiods"]) 
     return cfg

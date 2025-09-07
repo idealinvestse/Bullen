@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import uvicorn
+import logging
 
 from app.config import load_config
 from app.server.app import create_app
@@ -26,6 +27,13 @@ def _ensure_raspberry_pi() -> None:
 
 # Build FastAPI app with JACK engine so uvicorn can import as 'app.server.main:app'
 _config = load_config()
+
+# Configure logging early (before creating engine/app)
+_log_level = os.environ.get("BULLEN_LOG_LEVEL", str(_config.get("log_level", "INFO"))).upper()
+logging.basicConfig(
+    level=getattr(logging, _log_level, logging.INFO),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
 _ensure_raspberry_pi()
 engine = _Engine(_config)
 app = create_app(engine)

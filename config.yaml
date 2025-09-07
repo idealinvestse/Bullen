@@ -6,6 +6,7 @@ inputs: 6
 outputs: 8
 record: true
 recordings_dir: recordings
+record_queue_size: 64
 auto_connect_capture: true
 auto_connect_playback: true
 capture_match: audioinjector
