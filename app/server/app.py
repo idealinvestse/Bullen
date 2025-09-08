@@ -1,18 +1,25 @@
-import sys
-import subprocess
-from pathlib import Path
-from typing import Dict, Any, Set, List
-
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse, JSONResponse
 import asyncio
-import shutil
+import json
+import logging
+import os
+import subprocess
+import sys
 import tempfile
-import soundfile as sf
+import shutil
+import time
 import uuid
+from pathlib import Path
+from typing import Dict, Optional, Any, Set, List
+
+import soundfile as sf
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
+from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 import contextlib
 from scripts.make_test_wavs import make_tone  # reuse tone writer
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(engine: Any) -> FastAPI:
@@ -74,15 +81,43 @@ def create_app(engine: Any) -> FastAPI:
     # -------- API --------
 
     @app.get("/api/state")
-    def get_state():
-        """
-        Get the current state of the audio engine.
+    async def get_state():
+        """Get current engine state"""
+        state = engine.get_state()
         
-        Returns:
-            JSONResponse: Current engine state as JSON
-        """
-        # Return engine state as JSON
-        return JSONResponse(engine.get_state())
+        # Add advanced metrics if available
+        if hasattr(engine, 'advanced_processors') and engine.advanced_processors:
+            try:
+                # Scene detection
+                state['scene'] = engine.advanced_processors['scene'].current_scene
+                state['scene_confidence'] = engine.advanced_processors['scene'].scene_confidence
+                
+                # Adaptive processing metrics
+                adaptive = engine.advanced_processors['adaptive']
+                state['adaptive_gains'] = adaptive.adaptive_gains.tolist()
+                state['noise_gates'] = adaptive.noise_gates.tolist()
+                state['compressor_ratios'] = adaptive.compressor_ratios.tolist()
+                
+                # Telemetry
+                telemetry = engine.advanced_processors['telemetry']
+                state['health_score'] = telemetry.get_health_score()
+                state['xrun_count'] = telemetry.xrun_count
+                state['thd'] = telemetry.thd_measurements.tolist()
+                state['snr'] = telemetry.snr_measurements.tolist()
+                
+                # Buffer management
+                buffer_mgr = engine.advanced_processors['buffer_mgr']
+                state['resource_allocation'] = buffer_mgr.get_resource_allocation()
+                
+                # Mixer weights
+                mixer = engine.advanced_processors['mixer']
+                state['mix_weights'] = mixer.mix_weights.tolist()
+                state['priority_scores'] = mixer.priority_scores.tolist()
+                
+            except Exception as e:
+                logger.debug(f"Could not add advanced metrics: {e}")
+        
+        return state
 
     @app.post("/api/select/{ch}")
     def select_channel(ch: int):
@@ -153,14 +188,97 @@ def create_app(engine: Any) -> FastAPI:
 
     @app.get("/api/config")
     def get_config():
-        """
-        Get the current configuration.
+        """Get current configuration"""
+        return engine.config
+
+    @app.post("/api/noise_suppression/aggressiveness")
+    async def set_noise_suppression_aggressiveness(payload: Dict[str, float]):
+        """Set noise suppression aggressiveness level (0.0 to 1.0)"""
+        if hasattr(engine, 'noise_suppressor') and engine.noise_suppressor:
+            level = float(payload.get('level', 0.5))
+            engine.noise_suppressor.set_aggressiveness(level)
+            return {"ok": True, "aggressiveness": level}
+        return {"ok": False, "error": "Noise suppression not available"}
+    
+    @app.get("/api/noise_suppression/status")
+    async def get_noise_suppression_status():
+        """Get noise suppression status and configuration"""
+        if hasattr(engine, 'noise_suppressor') and engine.noise_suppressor:
+            return {
+                "enabled": True,
+                "aggressiveness": engine.noise_suppressor.aggressiveness,
+                "cross_channel_enabled": engine.noise_suppressor.enable_cross_channel,
+                "comfort_noise_level": engine.noise_suppressor.comfort_noise_level
+            }
+        return {"enabled": False}
+    
+    @app.get("/api/advanced/metrics")
+    async def get_advanced_metrics():
+        """Get detailed advanced processing metrics"""
+        metrics = {
+            'enabled': engine.advanced_processing_enabled,
+            'processors_available': False
+        }
         
-        Returns:
-            JSONResponse: Current configuration as JSON
-        """
-        # Return engine configuration as JSON
-        return JSONResponse(engine.config)
+        if hasattr(engine, 'advanced_processors') and engine.advanced_processors:
+            metrics['processors_available'] = True
+            try:
+                # Detailed metrics from each processor
+                metrics['psychoacoustic'] = {
+                    'bark_bands': engine.advanced_processors['psychoacoustic'].bark_bands.tolist(),
+                    'masking_threshold': engine.advanced_processors['psychoacoustic'].masking_threshold.tolist()
+                }
+                
+                adaptive = engine.advanced_processors['adaptive']
+                metrics['adaptive'] = {
+                    'gains': adaptive.adaptive_gains.tolist(),
+                    'noise_gates': adaptive.noise_gates.tolist(),
+                    'compressor_ratios': adaptive.compressor_ratios.tolist(),
+                    'stats': [
+                        {
+                            'rms': s.rms,
+                            'peak': s.peak,
+                            'crest_factor': s.crest_factor,
+                            'spectral_centroid': s.spectral_centroid,
+                            'zero_crossing_rate': s.zero_crossing_rate,
+                            'onset_detected': s.onset_detected,
+                            'silence_detected': s.silence_detected
+                        } for s in adaptive.stats
+                    ]
+                }
+                
+                mixer = engine.advanced_processors['mixer']
+                metrics['mixer'] = {
+                    'mix_weights': mixer.mix_weights.tolist(),
+                    'target_weights': mixer.target_weights.tolist(),
+                    'priority_scores': mixer.priority_scores.tolist(),
+                    'correlation_matrix': mixer.correlation_matrix.tolist()
+                }
+                
+                scene = engine.advanced_processors['scene']
+                metrics['scene'] = {
+                    'current_scene': scene.current_scene,
+                    'confidence': scene.scene_confidence,
+                    'scene_types': scene.scene_types
+                }
+                
+                buffer_mgr = engine.advanced_processors['buffer_mgr']
+                metrics['buffer_management'] = buffer_mgr.get_resource_allocation()
+                
+                telemetry = engine.advanced_processors['telemetry']
+                metrics['telemetry'] = {
+                    'health_score': telemetry.get_health_score(),
+                    'xrun_count': telemetry.xrun_count,
+                    'thd': telemetry.thd_measurements.tolist(),
+                    'snr': telemetry.snr_measurements.tolist(),
+                    'recent_xruns': len([t for t in telemetry.xrun_timestamps if t > time.time() - 60])
+                }
+                
+            except Exception as e:
+                metrics['error'] = str(e)
+                logger.error(f"Error getting advanced metrics: {e}")
+        
+        return metrics
 
     # -------- Tools: WAV generation and WAV feed --------
 

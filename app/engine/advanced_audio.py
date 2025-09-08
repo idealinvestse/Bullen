@@ -704,6 +704,15 @@ def integrate_advanced_features(engine):
     engine.buffer_manager = PredictiveBufferManager(engine.num_inputs)
     engine.telemetry = AdvancedTelemetry(engine.num_inputs)
     
+    # Add call center noise suppression
+    try:
+        from app.engine.noise_suppression import CallCenterNoiseSuppressor
+        engine.noise_suppressor = CallCenterNoiseSuppressor(engine.client.samplerate, engine.num_inputs)
+        logger.info("Call center noise suppression initialized")
+    except ImportError:
+        logger.warning("Noise suppression module not available")
+        engine.noise_suppressor = None
+    
     # Enable advanced processing flag
     engine.advanced_processing_enabled = True
     

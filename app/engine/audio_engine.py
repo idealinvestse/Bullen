@@ -391,6 +391,16 @@ class AudioEngine:
                 # Detect scene
                 scene = self.advanced_processors['scene'].update(stats)
                 
+                # Apply noise suppression for call center environment
+                if hasattr(self, 'noise_suppressor') and self.noise_suppressor and scene in ['speech', 'mixed']:
+                    # Create channel dictionary
+                    channels_dict = {i: processed_buffers[i] for i in range(len(processed_buffers))}
+                    # Apply multi-channel noise suppression
+                    suppressed = self.noise_suppressor.process_multi_channel(channels_dict)
+                    # Update processed buffers
+                    for i, buf in suppressed.items():
+                        processed_buffers[i] = buf
+                
                 # Apply adaptive processing
                 for i in range(len(processed_buffers)):
                     processed_buffers[i] = self.advanced_processors['adaptive'].process(

@@ -1,7 +1,8 @@
 import threading
 from typing import Any, Dict
-import sys
+import time
 from pathlib import Path
+import sys
 
 import numpy as np
 import pytest
@@ -12,25 +13,44 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.server.app import create_app
 
 
+class FakeNoiseSuppressor:
+    """Fake noise suppressor for testing."""
+    
+    def __init__(self):
+        self.aggressiveness = 0.7
+        self.enable_cross_channel = True
+        self.comfort_noise_level = 0.01
+    
+    def set_aggressiveness(self, level: float):
+        self.aggressiveness = level
+
+
 class FakeEngine:
+    """Fake audio engine for testing without JACK."""
+    
     def __init__(self, num_inputs: int = 6):
         self.num_inputs = num_inputs
-        self.num_outputs = 2
-        self.config: Dict[str, Any] = {
+        self.num_outputs = 2  # Default to 2 outputs for testing
+        self.selected_ch = 0
+        self.gains = np.ones(num_inputs)
+        self.mutes = np.zeros(num_inputs, dtype=bool)
+        self.vu_peak = np.random.rand(num_inputs) * 0.5
+        self.vu_rms = np.random.rand(num_inputs) * 0.3
+        self.config = {
             "inputs": num_inputs,
-            "outputs": 2,
+            "outputs": self.num_outputs,
             "recordings_dir": "recordings",
+            "enable_advanced_features": False,
+            "noise_suppression": {
+                "enabled": True,
+                "aggressiveness": 0.7
+            }
         }
-        self._samplerate = 48000
-        self._blocksize = 128
-        self._selected = 0
-        self._gains_lin = np.ones(num_inputs, dtype=np.float32)
-        self._mutes = np.zeros(num_inputs, dtype=bool)
-        self._vu_peak = np.zeros(num_inputs, dtype=np.float32)
-        self._vu_rms = np.zeros(num_inputs, dtype=np.float32)
-        self._running = False
-        self._tick = 0
-        self._lock = threading.Lock()
+        self.advanced_processing_enabled = False
+        self.advanced_processors = None
+        
+        # Mock noise suppressor
+        self.noise_suppressor = FakeNoiseSuppressor() if self.config.get("noise_suppression", {}).get("enabled") else None
 
     # API used by app
     def start(self) -> None:

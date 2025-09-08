@@ -1,14 +1,82 @@
-# Bullen configuration (defaults can be overridden here)
+# Bullen Configuration
+# Audio routing system for 6-channel capture to stereo monitor
+
+# Audio settings
 samplerate: 48000
 frames_per_period: 128
 nperiods: 2
+
+# Channel configuration
 inputs: 6
-outputs: 8
+outputs: 2
+
+# Recording
 record: true
 recordings_dir: recordings
 record_queue_size: 64
+rec_buffer_pool_size: 32
+record_post_gain: false
+
+# Auto-connect settings
 auto_connect_capture: true
 auto_connect_playback: true
-capture_match: audioinjector
-playback_match: audioinjector
+capture_match: capture
+playback_match: playback
+
+# Initial state
 selected_channel: 1
+
+# Advanced features
+enable_advanced_features: false
+vu_ring_buffer_size: 16
+
+# Adaptive processing
+adaptive_processing:
+  enabled: true
+  adaptation_rate: 0.1
+  target_rms: 0.1
+  noise_floor_percentile: 10
+
+# Psychoacoustic processing
+psychoacoustic:
+  enabled: true
+  masking_ratio: 0.1
+  loudness_model: zwicker
+
+# Intelligent mixing
+intelligent_mixing:
+  enabled: true
+  correlation_decay: 0.995
+  adaptation_rate: 0.05
+  frequency_masking: true
+
+# Scene detection
+scene_detection:
+  enabled: true
+  hysteresis_threshold: 0.1
+  feature_history_size: 50
+
+# Resource management
+resource_management:
+  target_latency_ms: 5.0
+  safety_factor: 1.5
+  history_size: 100
+
+# Telemetry
+telemetry:
+  enabled: true
+  health_score_threshold: 70
+  xrun_penalty: 10
+  thd_penalty_max: 20
+  snr_threshold: 40
+
+# Call Center Noise Suppression
+noise_suppression:
+  enabled: true
+  aggressiveness: 0.7  # 0=light, 1=heavy suppression
+  enable_cross_channel: true  # Use other channels for reference
+  vad_enabled: true  # Voice Activity Detection
+  comfort_noise_level: 0.01
+  spectral_subtraction_factor: 2.0
+  wiener_filter_enabled: true
+  adaptive_cancellation_enabled: true

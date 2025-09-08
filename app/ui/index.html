@@ -6,10 +6,184 @@
   <title>Bullen Audio Router</title>
   <link rel="stylesheet" href="/ui/css/styles.css" />
   <script src="/ui/js/api.js"></script>
-  <script src="/ui/js/ws.js"></script>
-  <script src="/ui/js/components/channel-card.js"></script>
-  <script src="/ui/js/components/vu-meter.js"></script>
-  <script src="/ui/js/devtools.js"></script>
+  <script type="module">
+    import { TestPanel } from './js/components/test-panel.js';
+    import { DeveloperPanel } from './js/components/developer-panel.js';
+    
+    // Initialize components
+    TestPanel.init();
+    DeveloperPanel.init();
+    
+    // Noise suppression functions
+    async function updateNoiseStatus() {
+      try {
+        const response = await fetch('/api/noise_suppression/status');
+        const status = await response.json();
+        
+        const statusEl = document.getElementById('noise-status');
+        if (statusEl) {
+          statusEl.textContent = status.enabled ? 'Aktiverad' : 'Inaktiverad';
+        }
+        
+        const slider = document.getElementById('noise-aggressiveness');
+        if (slider && status.aggressiveness !== undefined) {
+          slider.value = status.aggressiveness * 100;
+          const levelEl = document.getElementById('noise-level');
+          if (levelEl) {
+            levelEl.textContent = Math.round(status.aggressiveness * 100) + '%';
+          }
+        }
+      } catch (error) {
+        console.debug('Noise suppression status not available:', error);
+      }
+    }
+    
+    window.applyNoiseSettings = async function() {
+      const slider = document.getElementById('noise-aggressiveness');
+      const level = slider.value / 100;
+      
+      try {
+        const response = await fetch('/api/noise_suppression/aggressiveness', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ level: level })
+        });
+        
+        if (response.ok) {
+          const levelEl = document.getElementById('noise-level');
+          if (levelEl) {
+            levelEl.textContent = Math.round(level * 100) + '%';
+          }
+        }
+      } catch (error) {
+        console.error('Failed to apply noise settings:', error);
+      }
+    };
+    
+    // Update slider display
+    document.addEventListener('DOMContentLoaded', () => {
+      const slider = document.getElementById('noise-aggressiveness');
+      if (slider) {
+        slider.addEventListener('input', (e) => {
+          const levelEl = document.getElementById('noise-level');
+          if (levelEl) {
+            levelEl.textContent = e.target.value + '%';
+          }
+        });
+      }
+      
+      // Initial load
+      updateNoiseStatus();
+    });
+    
+    // Advanced telemetry visualization
+    let telemetryInterval = null;
+    
+    async function updateAdvancedTelemetry() {
+      try {
+        const response = await fetch('/api/advanced/metrics');
+        const metrics = await response.json();
+        
+        if (!metrics.enabled || !metrics.processors_available) {
+          document.getElementById('advanced-telemetry').style.display = 'none';
+          return;
+        }
+        
+        document.getElementById('advanced-telemetry').style.display = 'block';
+        
+        // Update health score
+        if (metrics.telemetry) {
+          const healthScore = Math.round(metrics.telemetry.health_score);
+          document.getElementById('health-score').querySelector('.score-value').textContent = healthScore;
+          document.getElementById('xrun-count').textContent = metrics.telemetry.xrun_count;
+          
+          const avgThd = metrics.telemetry.thd.reduce((a, b) => a + b, 0) / metrics.telemetry.thd.length;
+          document.getElementById('avg-thd').textContent = avgThd.toFixed(1);
+          
+          const avgSnr = metrics.telemetry.snr.reduce((a, b) => a + b, 0) / metrics.telemetry.snr.length;
+          document.getElementById('avg-snr').textContent = avgSnr.toFixed(1);
+        }
+        
+        // Update scene detection
+        if (metrics.scene) {
+          document.getElementById('scene-type').textContent = metrics.scene.current_scene;
+          const confidence = Math.round(metrics.scene.confidence * 100);
+          document.getElementById('scene-confidence').style.width = confidence + '%';
+          document.getElementById('scene-confidence-text').textContent = confidence + '%';
+        }
+        
+        // Update adaptive processing visualization
+        if (metrics.adaptive) {
+          const canvas = document.getElementById('adaptive-canvas');
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          
+          // Draw adaptive gains
+          const barWidth = canvas.width / metrics.adaptive.gains.length;
+          metrics.adaptive.gains.forEach((gain, i) => {
+            const height = gain * canvas.height * 0.8;
+            ctx.fillStyle = `hsl(${240 + i * 20}, 70%, 60%)`;
+            ctx.fillRect(i * barWidth, canvas.height - height, barWidth - 2, height);
+          });
+        }
+        
+        // Update mix weights visualization
+        if (metrics.mixer) {
+          const canvas = document.getElementById('mix-canvas');
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          
+          // Draw mix weights
+          const barWidth = canvas.width / metrics.mixer.mix_weights.length;
+          metrics.mixer.mix_weights.forEach((weight, i) => {
+            const height = weight * canvas.height;
+            ctx.fillStyle = `hsl(${120 + i * 30}, 70%, 50%)`;
+            ctx.fillRect(i * barWidth, canvas.height - height, barWidth - 2, height);
+          });
+        }
+        
+        // Update psychoacoustic visualization
+        if (metrics.psychoacoustic) {
+          const canvas = document.getElementById('bark-canvas');
+          const ctx = canvas.getContext('2d');
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          
+          // Draw masking threshold
+          const barWidth = canvas.width / metrics.psychoacoustic.masking_threshold.length;
+          metrics.psychoacoustic.masking_threshold.forEach((threshold, i) => {
+            const height = Math.min(threshold * 1000, canvas.height);
+            ctx.fillStyle = `rgba(103, 126, 234, ${0.3 + threshold})`;
+            ctx.fillRect(i * barWidth, canvas.height - height, barWidth - 1, height);
+          });
+        }
+        
+        // Update resource management
+        if (metrics.buffer_management) {
+          document.getElementById('buffer-size').textContent = metrics.buffer_management.recommended_buffer_size;
+          const headroom = Math.round(metrics.buffer_management.processing_headroom * 100);
+          document.getElementById('processing-headroom').textContent = headroom;
+          const latency = (metrics.buffer_management.mean_processing_time * 1000).toFixed(2);
+          document.getElementById('processing-latency').textContent = latency;
+        }
+        
+      } catch (error) {
+        console.debug('Advanced telemetry not available:', error);
+      }
+    }
+    
+    // Start telemetry updates when advanced features are enabled
+    async function checkAdvancedFeatures() {
+      const response = await fetch('/api/config');
+      const config = await response.json();
+      
+      if (config.enable_advanced_features) {
+        updateAdvancedTelemetry();
+        telemetryInterval = setInterval(updateAdvancedTelemetry, 1000);
+      }
+    }
+    
+    checkAdvancedFeatures();
+  </script>
   <script type="module" src="/ui/js/app.js"></script>
 </head>
 <body>
@@ -87,6 +261,10 @@
             <li><strong>Röd zon:</strong> Risk för klippning (-6 till 0 dB)</li>
             <li><strong>Gul linje:</strong> Peak-markör visar högsta momentana nivå</li>
             <li><strong>Uppdateringsfrekvens:</strong> ~20 Hz för smidig visning</li>
+            <li><strong>Samplingsfrekvens:</strong> <span id="sampleRateInfo">-</span> Hz</li>
+            <li><strong>Bufferstorlek:</strong> <span id="bufferSizeInfo">-</span> samples</li>
+            <li><strong>Latens:</strong> ~<span id="latencyInfo">-</span> ms</li>
+            <li><strong>Inspelning:</strong> <span id="recordingInfo">-</span></li>
           </ul>
         </div>
 
@@ -101,11 +279,32 @@
           <h3>Tekniska detaljer</h3>
           <ul>
             <li><strong>Audio backend:</strong> <span id="backendInfo">-</span></li>
-            <li><strong>Samplingsfrekvens:</strong> <span id="sampleRateInfo">-</span> Hz</li>
-            <li><strong>Bufferstorlek:</strong> <span id="bufferSizeInfo">-</span> samples</li>
-            <li><strong>Latens:</strong> ~<span id="latencyInfo">-</span> ms</li>
-            <li><strong>Inspelning:</strong> <span id="recordingInfo">-</span></li>
           </ul>
+        </div>
+        
+        <div class="setting-section">
+          <h3>🔇 Brusreducering för Callcenter</h3>
+          <p>Avancerad brusreducering optimerad för callcenter-miljöer med flera operatörer.</p>
+          <div class="noise-control">
+            <div class="control-item">
+              <label>Status:</label>
+              <span id="noise-status">Laddar...</span>
+            </div>
+            <div class="control-item">
+              <label>Aggressivitet:</label>
+              <input type="range" id="noise-aggressiveness" min="0" max="100" value="70" />
+              <span id="noise-level">70%</span>
+            </div>
+            <div class="control-item">
+              <button onclick="applyNoiseSettings()">Tillämpa</button>
+            </div>
+          </div>
+          <ul>
+            <li><strong>0-30%:</strong> Lätt filtrering - minimal påverkan på röstkvalitet</li>
+            <li><strong>40-70%:</strong> Balanserad - rekommenderat för callcenter</li>
+            <li><strong>80-100%:</strong> Aggressiv - maximal brusreducering</li>
+          </ul>
+          <p><small>Använder VAD, spektral subtraktion, Wiener-filtrering och adaptiv korskanals-eliminering.</small></p>
         </div>
       </div>
     </section>
