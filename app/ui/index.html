@@ -188,36 +188,27 @@
 </head>
 <body>
   <header>
-    <h1>Bullen Audio Router</h1>
+    <h1>Bullen</h1>
     <div class="spacer"></div>
-    <div class="small">Selected: <span id="selected">-</span></div>
-    <div class="small" id="wsStatus" role="status" aria-live="polite" style="margin-left:8px;">WS: …</div>
-    <button id="settingsBtn" onclick="toggleSettings()" style="margin-left: 8px;">⚙️ Settings</button>
-    <button id="testBtn" onclick="toggleTestView()" style="margin-left: 8px;">🔊 Test</button>
+    <div class="small">CH<span id="selected">-</span></div>
+    <div class="small" id="wsStatus" role="status" aria-live="polite">WS</div>
+    <button id="settingsBtn" onclick="toggleSettings()">⚙️</button>
+    <button id="testBtn" onclick="toggleTestView()">🔊</button>
   </header>
 
   <main id="mainView" role="main" aria-label="Monitor">
     <section class="panel">
-      <div class="row" style="margin-bottom:8px;">
-        <div class="label">Select channel</div>
-        <div class="info-icon" onclick="showInfo('channel')" title="Click for more info">ℹ️</div>
-      </div>
+      <div class="label" style="margin-bottom:8px;">Kanaler</div>
       <div class="channels" id="channelButtons"></div>
     </section>
 
     <section class="panel">
-      <div class="row" style="margin-bottom:8px;">
-        <div class="label">Gains & Mutes</div>
-        <div class="info-icon" onclick="showInfo('gain')" title="Click for more info">ℹ️</div>
-      </div>
+      <div class="label" style="margin-bottom:8px;">Kontroller</div>
       <div class="grid-3" id="gainMute"></div>
     </section>
 
     <section class="panel">
-      <div class="row" style="margin-bottom:8px;">
-        <div class="label">VU meters (RMS with peak marker)</div>
-        <div class="info-icon" onclick="showInfo('vu')" title="Click for more info">ℹ️</div>
-      </div>
+      <div class="label" style="margin-bottom:8px;">Nivåer</div>
       <div class="grid" id="meters"></div>
     </section>
   </main>

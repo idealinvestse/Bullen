@@ -1,11 +1,19 @@
 import os
 import uvicorn
 
-
 if __name__ == "__main__":
-    # Get host from environment variable or default to all interfaces
-    host = os.environ.get("BULLEN_HOST", "0.0.0.0")
-    # Get port from environment variable or default to 8000
-    port = int(os.environ.get("BULLEN_PORT", "8000"))
-    # Start uvicorn server with the FastAPI app from app.server.main
-    uvicorn.run("app.server.main:app", host=host, port=port, reload=False, workers=1)
+    # Enable FakeEngine for development on non-Pi systems
+    if not os.environ.get("BULLEN_ALLOW_NON_PI"):
+        print("🎵 Starting Bullen Audio Router for Raspberry Pi...")
+        print("💡 For development on non-Pi systems, use: BULLEN_ALLOW_NON_PI=1 python Bullen.py")
+    else:
+        print("🧪 Starting Bullen Audio Router in development mode (FakeEngine)")
+        print("📱 UI optimized for 9\" touchscreen available at http://localhost:8000")
+    
+    uvicorn.run(
+        "app.server.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=False,
+        log_level="info"
+    )
