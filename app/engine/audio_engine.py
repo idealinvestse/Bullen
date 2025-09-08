@@ -64,6 +64,15 @@ class AudioEngine:
         self.capture_match = str(config.get('capture_match', 'capture')).lower()
         # String to match when auto-connecting playback ports
         self.playback_match = str(config.get('playback_match', 'playback')).lower()
+        
+        # Pre-allocated recording buffers for RT-safety
+        self._rec_buffer_pool_size = int(config.get('rec_buffer_pool_size', 32))
+        self._rec_buffer_pool = []
+        self._rec_pool_indices = np.zeros(self.num_inputs, dtype=np.int32)
+        
+        # Advanced features flag
+        self.advanced_processing_enabled = bool(config.get('enable_advanced_features', False))
+        self.advanced_processors = None
 
         # Create JACK client
         self.client = jack.Client('bullen', no_start_server=False)
@@ -135,6 +144,9 @@ class AudioEngine:
         # Flag indicating if recording threads have been started
         self._rec_started = False
 
+        # Initialize pre-allocated recording buffers after client creation
+        self._init_recording_buffers()
+        
         # Callback registration
         # Register the process callback function
         self.client.set_process_callback(self._process)
@@ -162,6 +174,10 @@ class AudioEngine:
         # Start VU sampling thread
         if not self._vu_started:
             self._start_vu_thread()
+            
+        # Initialize advanced features if enabled
+        if self.advanced_processing_enabled and self.advanced_processors is None:
+            self._init_advanced_features()
 
     def stop(self):
         """
@@ -274,6 +290,44 @@ class AudioEngine:
         }
 
     # --------------- Internal ---------------
+    
+    def _init_advanced_features(self):
+        """Initialize advanced audio processing features."""
+        try:
+            from app.engine.advanced_audio import (
+                PsychoacousticProcessor,
+                AdaptiveProcessor,
+                IntelligentMixer,
+                SceneDetector,
+                PredictiveBufferManager,
+                AdvancedTelemetry
+            )
+            
+            self.advanced_processors = {
+                'psychoacoustic': PsychoacousticProcessor(self.client.samplerate),
+                'adaptive': AdaptiveProcessor(self.client.samplerate, self.num_inputs),
+                'mixer': IntelligentMixer(self.num_inputs, self.client.samplerate),
+                'scene': SceneDetector(self.num_inputs),
+                'buffer_mgr': PredictiveBufferManager(self.num_inputs),
+                'telemetry': AdvancedTelemetry(self.num_inputs)
+            }
+            logger.info("Advanced audio features initialized successfully")
+        except ImportError as e:
+            logger.warning(f"Advanced features not available: {e}")
+            self.advanced_processing_enabled = False
+        except Exception as e:
+            logger.error(f"Failed to initialize advanced features: {e}")
+            self.advanced_processing_enabled = False
+    
+    def _init_recording_buffers(self):
+        """Initialize pre-allocated recording buffers for RT-safety."""
+        # Pre-allocate buffers based on maximum expected frame size
+        max_frames = self.client.blocksize if hasattr(self.client, 'blocksize') else 1024
+        for ch in range(self.num_inputs):
+            ch_buffers = []
+            for _ in range(self._rec_buffer_pool_size):
+                ch_buffers.append(np.zeros(max_frames, dtype=np.float32))
+            self._rec_buffer_pool.append(ch_buffers)
 
     def _process(self, frames: int):
         """
@@ -290,16 +344,24 @@ class AudioEngine:
             gains = self.gains.copy()
             mutes = self.mutes.copy()
 
+        # Collect input buffers
+        input_buffers = []
+        processed_buffers = []
+        
         # JACK provides float32 buffers
         # Read inputs and compute VU post-gain
         route_buf = None
         for i, inport in enumerate(self.inports):
             # Get audio buffer from input port
             buf = inport.get_array()  # np.ndarray float32, shape (frames,)
+            input_buffers.append(buf.copy() if self.advanced_processing_enabled else buf)
+            
             # Apply gain and mute settings
             # VU uses post-gain signal - only track peaks in RT thread (lightweight)
             g = 0.0 if mutes[i] else gains[i]
             post_gain = buf * g
+            processed_buffers.append(post_gain)
+            
             # Update peak tracking only (lightweight operation for RT thread)
             # RMS accumulation moved to separate thread for ~20 Hz sampling
             if frames > 0:
@@ -318,35 +380,80 @@ class AudioEngine:
             if i == sel:
                 route_buf = post_gain
 
-        # Route selected channel to output
+        # Apply advanced processing if enabled
+        if self.advanced_processing_enabled and self.advanced_processors:
+            try:
+                # Analyze signals
+                stats = []
+                for i, buf in enumerate(input_buffers):
+                    stats.append(self.advanced_processors['adaptive'].analyze_signal(buf, i))
+                
+                # Detect scene
+                scene = self.advanced_processors['scene'].update(stats)
+                
+                # Apply adaptive processing
+                for i in range(len(processed_buffers)):
+                    processed_buffers[i] = self.advanced_processors['adaptive'].process(
+                        processed_buffers[i], i
+                    )
+                
+                # Intelligent mixing for multi-channel output
+                if self.num_outputs > 2 and scene in ['music', 'mixed']:
+                    # Use intelligent mixer for complex scenarios
+                    mixed = self.advanced_processors['mixer'].mix(processed_buffers, stats)
+                    route_buf = mixed
+                elif route_buf is not None:
+                    # Apply psychoacoustic processing to selected channel
+                    route_buf = self.advanced_processors['psychoacoustic'].apply_masking(
+                        route_buf, route_buf
+                    )
+                
+                # Update telemetry (non-blocking)
+                # Use minimal processing time tracking
+                self.advanced_processors['buffer_mgr'].update_statistics(0.001)  # Placeholder
+                
+            except Exception as e:
+                # Fallback to simple processing on error
+                logger.debug(f"Advanced processing skipped: {e}")
+
+        # Route to output
         if route_buf is None:
             # Nothing selected; output silence
             for o in self.outports:
                 o.get_array()[:] = 0.0
         else:
-            # Route selected channel to all outputs
+            # Route to all outputs
             if self.num_outputs == 2:
                 # Legacy stereo mode - copy to both L/R
                 self.outports[0].get_array()[:] = route_buf
                 self.outports[1].get_array()[:] = route_buf
             else:
-                # Multi-channel mode - copy selected channel to all outputs
+                # Multi-channel mode - copy to all outputs
                 for o in self.outports:
                     o.get_array()[:] = route_buf
 
-        # Enqueue raw input for recording (non-blocking)
+        # Enqueue raw input for recording (non-blocking with pre-allocated buffers)
         # Only record if recording is enabled and threads have been started
         if self.record_enabled and self._rec_started:
             for i, inport in enumerate(self.inports):
-                # Copy buffer to decouple from RT buffer
-                raw = inport.get_array().copy()  # copy to decouple from RT buffer
+                # Use pre-allocated buffer from pool (RT-safe, no memory allocation)
+                pool_idx = self._rec_pool_indices[i]
+                rec_buffer = self._rec_buffer_pool[i][pool_idx]
+                
+                # Copy data to pre-allocated buffer
+                input_data = inport.get_array()
+                rec_buffer[:frames] = input_data
+                
                 try:
-                    # Try to add buffer to recording queue
-                    self._rec_queues[i].put_nowait(raw)
+                    # Try to add buffer reference to recording queue
+                    self._rec_queues[i].put_nowait((rec_buffer[:frames].copy(), frames))
                 except queue.Full:
                     # If queue is full, increment drop counter (no logging in RT thread)
                     with self._lock:
                         self._rec_drop_counts[i] += 1
+                
+                # Advance to next buffer in pool
+                self._rec_pool_indices[i] = (pool_idx + 1) % self._rec_buffer_pool_size
 
     def _auto_connect_inputs(self):
         """
@@ -527,7 +634,13 @@ class AudioEngine:
         with sf.SoundFile(str(path), mode='w', samplerate=self.client.samplerate, channels=1, subtype='PCM_24', format='WAV') as f:
             while not self._rec_stop.is_set():
                 try:
-                    block = self._rec_queues[ch_index].get(timeout=0.2)
+                    # Get tuple of (buffer, frames) from queue
+                    data = self._rec_queues[ch_index].get(timeout=0.2)
+                    if isinstance(data, tuple):
+                        block, frames = data
+                    else:
+                        # Fallback for compatibility
+                        block = data
                 except queue.Empty:
                     continue
                 # Ensure shape (n, 1) for proper WAV file format

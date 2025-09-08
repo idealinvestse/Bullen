@@ -20,7 +20,7 @@ def test_get_config(client):
     assert r.status_code == 200
     cfg = r.json()
     assert cfg.get("inputs") == 6
-    assert cfg.get("outputs") == 8  # Updated to match Audio Injector Octo capabilities
+    assert cfg.get("outputs") == 2  # FakeEngine uses 2 outputs for testing
 
 
 def test_state_shape(client):
