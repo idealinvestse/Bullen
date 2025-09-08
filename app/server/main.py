@@ -34,12 +34,18 @@ def _create_engine(config):
 # Load config once at module level
 _config = load_config()
 
-# Configure logging early (before creating engine/app)
-_log_level = os.environ.get("BULLEN_LOG_LEVEL", str(_config.get("log_level", "INFO"))).upper()
+# Configure logging with D-Bus warning suppression
 logging.basicConfig(
-    level=getattr(logging, _log_level, logging.INFO),
-    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# Suppress D-Bus warnings that don't affect functionality
+logging.getLogger('dbus').setLevel(logging.ERROR)
+logging.getLogger('dbus.proxies').setLevel(logging.ERROR)
+
+# Set environment variable to suppress D-Bus warnings
+os.environ.setdefault('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/dev/null')
 _ensure_raspberry_pi()
 engine = _create_engine(_config)
 app = create_app(engine)
