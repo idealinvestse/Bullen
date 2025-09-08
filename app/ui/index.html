@@ -4,102 +4,25 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Bullen Audio Router</title>
-  <style>
-    :root { --bg: #0e1116; --fg: #e6e6e6; --muted: #999; --accent: #5ac8fa; --warn: #ff9f0a; }
-    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background: var(--bg); color: var(--fg); }
-    header { padding: 12px 16px; border-bottom: 1px solid #222; display: flex; align-items: center; gap: 12px; }
-    h1 { font-size: 18px; margin: 0; font-weight: 600; }
-    main { padding: 16px; display: grid; gap: 16px; grid-template-columns: 1fr; max-width: 1100px; margin: 0 auto; }
-
-    .panel { background: #141922; border: 1px solid #222; border-radius: 10px; padding: 16px; }
-    .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-    .spacer { flex: 1; }
-
-    .channels { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
-    button { background: #1e2735; color: var(--fg); border: 1px solid #2a3550; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
-    button:hover { background: #233048; }
-    button.sel { background: var(--accent); color: #000; border-color: var(--accent); }
-
-    .mute { background: #2a1f1f; border-color: #473333; }
-    .mute.on { background: #d43f3f; border-color: #d43f3f; color: #000; }
-
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-
-    .slider { display: grid; grid-template-columns: 60px 1fr 80px; align-items: center; gap: 8px; }
-    input[type="range"] { width: 100%; }
-
-    .meter { height: 12px; background: #0b0f15; border: 1px solid #1b2230; border-radius: 6px; position: relative; overflow: hidden; }
-    .meter .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: linear-gradient(90deg, #3ddc97, #ffd166, #ef476f); }
-    .meter .peak { position: absolute; top: 0; bottom: 0; width: 2px; background: #ffd166; opacity: 0.9; }
-    .label { font-size: 12px; color: var(--muted); }
-    .small { font-size: 12px; color: var(--muted); }
-    .card { padding: 12px; border: 1px solid #222; border-radius: 10px; background: #131722; }
-    .info-icon { cursor: pointer; font-size: 14px; color: var(--accent); margin-left: 8px; }
-    .info-icon:hover { opacity: 0.7; }
-    .settings-content { display: grid; gap: 20px; }
-    .setting-section { background: #0f1419; padding: 16px; border-radius: 8px; border: 1px solid #1a2332; }
-    .setting-section h3 { margin: 0 0 8px 0; color: var(--accent); font-size: 16px; }
-    .setting-section p { margin: 0 0 12px 0; line-height: 1.4; }
-    .setting-section ul { margin: 0; padding-left: 20px; }
-    .setting-section li { margin-bottom: 4px; line-height: 1.3; }
-    .setting-section strong { color: var(--fg); }
-    .test-content { display: grid; gap: 20px; }
-    .test-info { background: #0f1419; padding: 12px; border-radius: 8px; border: 1px solid #1a2332; }
-    .test-channels { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
-    .test-channel { background: #131722; border: 1px solid #222; border-radius: 10px; padding: 16px; }
-    .test-channel h4 { margin: 0 0 12px 0; color: var(--accent); display: flex; align-items: center; gap: 8px; }
-    .test-channel.active { border-color: var(--accent); box-shadow: 0 0 10px rgba(90, 200, 250, 0.3); }
-    .channel-status { font-size: 12px; padding: 2px 6px; border-radius: 4px; }
-    .status-active { background: #2d5a2d; color: #90ee90; }
-    .status-muted { background: #5a2d2d; color: #ff6b6b; }
-    .status-inactive { background: #2d2d2d; color: #999; }
-    .test-meter { height: 20px; background: #0b0f15; border: 1px solid #1b2230; border-radius: 10px; position: relative; overflow: hidden; margin: 8px 0; }
-    .test-meter .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: linear-gradient(90deg, #3ddc97, #ffd166, #ef476f); transition: width 0.1s ease; }
-    .test-meter .peak { position: absolute; top: 0; bottom: 0; width: 3px; background: #ffd166; opacity: 0.9; transition: left 0.2s ease; }
-    .test-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-    .control-section { background: #0f1419; padding: 16px; border-radius: 8px; border: 1px solid #1a2332; }
-    .control-section h3 { margin: 0 0 12px 0; color: var(--accent); font-size: 16px; }
-    .test-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .test-btn { padding: 10px 12px; border-radius: 8px; border: 1px solid #2a3550; background: #1e2735; color: var(--fg); cursor: pointer; font-size: 14px; }
-    .test-btn:hover { background: #233048; }
-    .test-btn.mute-all { background: #2a1f1f; border-color: #473333; }
-    .test-btn.mute-all:hover { background: #3a2525; }
-    .vu-controls { display: grid; gap: 8px; }
-    .vu-controls label { display: flex; align-items: center; gap: 8px; font-size: 14px; }
-    .channel-gain { display: grid; grid-template-columns: 1fr 60px; gap: 8px; align-items: center; margin: 8px 0; }
-    .channel-gain input[type="range"] { width: 100%; }
-    .channel-gain .gain-value { font-size: 12px; color: var(--muted); text-align: center; }
-    .channel-mute { margin: 8px 0; }
-    .channel-mute button { width: 100%; }
-    /* Developer tools */
-    .tabs { display: flex; gap: 8px; margin: 0 0 12px 0; flex-wrap: wrap; }
-    .tab-btn { background: #1b2536; border: 1px solid #2a3550; color: var(--fg); padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 13px; }
-    .tab-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
-    .log { background: #0b0f15; border: 1px solid #1b2230; border-radius: 8px; padding: 8px; max-height: 220px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-    .field { display: grid; grid-template-columns: 160px 1fr; align-items: center; gap: 8px; margin-bottom: 8px; }
-    .field input, .field select, .field textarea { width: 100%; background: #0f1419; border: 1px solid #1a2332; color: var(--fg); border-radius: 6px; padding: 6px 8px; font-size: 13px; }
-    .two-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
-    .danger { background: #592323; border-color: #7a2f2f; }
-    @media (max-width: 768px) {
-      .test-channels { grid-template-columns: 1fr; }
-      .test-controls { grid-template-columns: 1fr; }
-      .test-buttons { grid-template-columns: 1fr; }
-    }
-  </style>
+  <link rel="stylesheet" href="/ui/css/styles.css" />
+  <script src="/ui/js/api.js"></script>
+  <script src="/ui/js/ws.js"></script>
+  <script src="/ui/js/components/channel-card.js"></script>
+  <script src="/ui/js/components/vu-meter.js"></script>
+  <script src="/ui/js/devtools.js"></script>
+  <script type="module" src="/ui/js/app.js"></script>
 </head>
 <body>
   <header>
     <h1>Bullen Audio Router</h1>
     <div class="spacer"></div>
     <div class="small">Selected: <span id="selected">-</span></div>
+    <div class="small" id="wsStatus" role="status" aria-live="polite" style="margin-left:8px;">WS: …</div>
     <button id="settingsBtn" onclick="toggleSettings()" style="margin-left: 8px;">⚙️ Settings</button>
     <button id="testBtn" onclick="toggleTestView()" style="margin-left: 8px;">🔊 Test</button>
   </header>
 
-  <main id="mainView">
+  <main id="mainView" role="main" aria-label="Monitor">
     <section class="panel">
       <div class="row" style="margin-bottom:8px;">
         <div class="label">Select channel</div>
@@ -125,7 +48,7 @@
     </section>
   </main>
 
-  <main id="settingsView" style="display: none;">
+  <main id="settingsView" role="main" aria-label="Settings" style="display: none;">
     <section class="panel">
       <div class="row" style="margin-bottom:16px;">
         <h2 style="margin: 0; font-size: 20px;">Inställningar & Information</h2>
@@ -188,7 +111,7 @@
     </section>
   </main>
 
-  <main id="testView" style="display: none;">
+  <main id="testView" role="main" aria-label="Tools & Tests" style="display: none;">
     <section class="panel">
       <div class="row" style="margin-bottom:16px;">
         <h2 style="margin: 0; font-size: 20px;">Ljudkanal-test</h2>
@@ -231,14 +154,14 @@
 
         <div class="control-section">
           <h3>Developer Tools</h3>
-          <div class="tabs">
-            <button class="tab-btn active" id="tab-api" onclick="devSetTab('api')">API Console</button>
-            <button class="tab-btn" id="tab-ws" onclick="devSetTab('ws')">WS Inspector</button>
-            <button class="tab-btn" id="tab-seq" onclick="devSetTab('seq')">Sequences</button>
-            <button class="tab-btn" id="tab-metrics" onclick="devSetTab('metrics')">Metrics</button>
+          <div class="tabs" role="tablist" aria-label="Developer tools tabs">
+            <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="tabc-api" id="tab-api" onclick="DevTools.setTab('api')">API Console</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tabc-ws" id="tab-ws" onclick="DevTools.setTab('ws')">WS Inspector</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tabc-seq" id="tab-seq" onclick="DevTools.setTab('seq')">Sequences</button>
+            <button class="tab-btn" role="tab" aria-selected="false" aria-controls="tabc-metrics" id="tab-metrics" onclick="DevTools.setTab('metrics')">Metrics</button>
           </div>
 
-          <div id="tabc-api" class="tab-content active">
+          <div id="tabc-api" class="tab-content active" role="tabpanel" aria-labelledby="tab-api">
             <div class="two-cols">
               <div>
                 <div class="field"><label>Method</label>
@@ -270,7 +193,7 @@
             </div>
           </div>
 
-          <div id="tabc-ws" class="tab-content">
+          <div id="tabc-ws" class="tab-content" role="tabpanel" aria-labelledby="tab-ws" hidden>
             <div class="row" style="gap:8px; margin-bottom:8px; flex-wrap: wrap;">
               <button class="test-btn" id="wsPauseBtn" onclick="devWsToggle()">Pause logging</button>
               <button class="test-btn" onclick="devWsClear()">Clear</button>
@@ -289,7 +212,7 @@
             </div>
           </div>
 
-          <div id="tabc-seq" class="tab-content">
+          <div id="tabc-seq" class="tab-content" role="tabpanel" aria-labelledby="tab-seq" hidden>
             <div class="two-cols">
               <div>
                 <h4 style="margin:0 0 8px 0;">Cycle channels</h4>
@@ -322,7 +245,7 @@
             </div>
           </div>
 
-          <div id="tabc-metrics" class="tab-content">
+          <div id="tabc-metrics" class="tab-content" role="tabpanel" aria-labelledby="tab-metrics" hidden>
             <div id="metricsContent" class="log" style="min-height:120px;"></div>
           </div>
         </div>
@@ -458,53 +381,120 @@
   </main>
 
   <script>
-    const N = 6;
+    // Toast notifications
+    function showToast(message, type = 'info') {
+      let cont = document.getElementById('toastContainer');
+      if (!cont) {
+        cont = document.createElement('div');
+        cont.id = 'toastContainer';
+        cont.className = 'toast-container';
+        cont.setAttribute('aria-live', 'assertive');
+        cont.setAttribute('aria-atomic', 'true');
+        document.body.appendChild(cont);
+      }
+      const t = document.createElement('div');
+      t.className = `toast toast--${type}`;
+      t.textContent = message;
+      cont.appendChild(t);
+      setTimeout(() => { try { cont.removeChild(t); } catch(_){} }, 3000);
+    }
+    let N = 6;
+    let CONFIG = null;
     const channelButtons = document.getElementById('channelButtons');
     const meters = document.getElementById('meters');
     const gainMute = document.getElementById('gainMute');
     const selectedEl = document.getElementById('selected');
+    const wsStatusEl = document.getElementById('wsStatus');
+    let _vuPending = null;
+    let _vuRaf = null;
 
-    // Build controls
-    for (let i = 1; i <= N; i++) {
-      const b = document.createElement('button');
-      b.textContent = `CH ${i}`;
-      b.id = `btn-${i}`;
-      b.onclick = () => selectChannel(i);
-      channelButtons.appendChild(b);
+    // Helpers
+    function debounce(fn, wait) {
+      let t = null, lastArgs = null;
+      return function(...args) {
+        lastArgs = args;
+        if (t) clearTimeout(t);
+        t = setTimeout(() => { t = null; fn.apply(this, lastArgs); }, wait);
+      };
+    }
+    function normFromDb(db) {
+      // Map -60..0 dB -> 0..1 linearly; clamp outside range
+      const minDb = -60, maxDb = 0;
+      const cl = Math.max(minDb, Math.min(maxDb, db));
+      return (cl - minDb) / (maxDb - minDb);
+    }
+    const _gainDebounced = {};
+    function debouncedGain(ch) {
+      if (!_gainDebounced[ch]) _gainDebounced[ch] = debounce((v) => setGainDb(ch, v), 150);
+      return _gainDebounced[ch];
+    }
 
-      const card = document.createElement('div');
-      card.className = 'card';
+    // dB conversion helper
+    function vToDb(v) {
+      const eps = 1e-9;
+      return 20 * Math.log10(Math.max(eps, v));
+    }
 
-      const row1 = document.createElement('div');
-      row1.className = 'row';
-      const mute = document.createElement('button');
-      mute.textContent = 'Mute';
-      mute.className = 'mute';
-      mute.id = `mute-${i}`;
-      mute.onclick = () => setMute(i, !(mute.classList.contains('on')));
-      row1.appendChild(mute);
-      card.appendChild(row1);
+    // Test view helpers
+    function updateTestGainDisplay(ch, val) {
+      const el = document.getElementById(`test-gain-value-${ch}`);
+      if (el) el.textContent = `${parseFloat(val).toFixed(1)} dB`;
+    }
+    async function toggleChannelMute(ch) {
+      const btn = document.getElementById(`test-mute-${ch}`);
+      const current = btn ? btn.classList.contains('on') : false;
+      try { await setMute(ch, !current); } catch(_) {}
+    }
 
-      const slider = document.createElement('div');
-      slider.className = 'slider';
-      const label = document.createElement('div'); label.textContent = `CH ${i}`; slider.appendChild(label);
-      const range = document.createElement('input');
-      range.type = 'range'; range.min = -60; range.max = 20; range.step = 0.5; range.value = 0; range.id = `gain-${i}`;
-      range.oninput = () => setGainDb(i, parseFloat(range.value));
-      slider.appendChild(range);
-      const val = document.createElement('div'); val.className = 'small'; val.id = `gaindb-${i}`; val.textContent = '0.0 dB'; slider.appendChild(val);
-      card.appendChild(slider);
+    // Info popovers
+    function showInfo(kind) {
+      const map = {
+        channel: 'Välj vilken ingång som ska monitoreras i headset.',
+        gain: 'Justera per-kanals gain i dB. Mute tystar kanalen.',
+        vu: 'RMS-bar och peak-markör i dB (‑60 till 0 dB).',
+      };
+      showToast(map[kind] || 'Info', 'success');
+    }
 
-      gainMute.appendChild(card);
+    function buildUI(n) {
+      // clear containers first (in case of rebuild)
+      channelButtons.innerHTML = '';
+      gainMute.innerHTML = '';
+      meters.innerHTML = '';
+      for (let i = 1; i <= n; i++) {
+        const b = document.createElement('button');
+        b.textContent = `CH ${i}`;
+        b.id = `btn-${i}`;
+        b.onclick = () => selectChannel(i);
+        b.setAttribute('aria-label', `Select channel ${i}`);
+        b.setAttribute('aria-pressed', 'false');
+        channelButtons.appendChild(b);
 
-      const mcard = document.createElement('div');
-      mcard.className = 'card';
-      const title = document.createElement('div'); title.className = 'small'; title.textContent = `CH ${i}`; mcard.appendChild(title);
-      const meter = document.createElement('div'); meter.className = 'meter'; meter.id = `meter-${i}`;
-      const bar = document.createElement('div'); bar.className = 'bar'; bar.id = `bar-${i}`; meter.appendChild(bar);
-      const pk = document.createElement('div'); pk.className = 'peak'; pk.id = `peak-${i}`; meter.appendChild(pk);
-      mcard.appendChild(meter);
-      meters.appendChild(mcard);
+        const card = window.BullenComponents.buildGainMuteCard(i, {
+          onMute: (ch, on) => setMute(ch, on),
+          onGainDb: (ch, val) => debouncedGain(ch)(val)
+        });
+        gainMute.appendChild(card);
+
+        const mcard = window.BullenComponents.buildVuMeter(i);
+        meters.appendChild(mcard);
+      }
+    }
+
+    // Coalesce VU updates to animation frames for smoother UI and fewer layout passes
+    function scheduleVU(vu) {
+      _vuPending = vu;
+      if (_vuRaf) return;
+      _vuRaf = requestAnimationFrame(() => {
+        _vuRaf = null;
+        if (_vuPending) {
+          const data = _vuPending; _vuPending = null;
+          updateVU(data);
+          // Also update test view if visible
+          const testView = document.getElementById('testView');
+          if (testView && testView.style.display !== 'none') { try { updateTestVU(data); } catch(_){} }
+        }
+      });
     }
 
     // API helpers
@@ -513,10 +503,13 @@
      * @param {number} ch - Channel number (1-based)
      */
     async function selectChannel(ch) {
-      // Send POST request to select channel API endpoint
-      await fetch(`/api/select/${ch}`, { method: 'POST' });
-      // Update UI to highlight selected channel
-      highlightSelected(ch);
+      try {
+        await window.BullenAPI.selectChannel(ch);
+        highlightSelected(ch);
+      } catch (e) {
+        if (wsStatusEl) { wsStatusEl.textContent = `API error: select ${ch}`; wsStatusEl.style.color = '#ef476f'; }
+        console.error('selectChannel failed', e);
+      }
     }
 
     /**
@@ -525,10 +518,14 @@
      * @param {number} db - Gain value in decibels
      */
     async function setGainDb(ch, db) {
-      // Send POST request to gain API endpoint with dB value
-      await fetch(`/api/gain/${ch}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ gain_db: db }) });
-      // Update gain display label with new value
-      const el = document.getElementById(`gaindb-${ch}`); if (el) el.textContent = `${db.toFixed(1)} dB`;
+      try {
+        await window.BullenAPI.setGainDb(ch, db);
+        const el = document.getElementById(`gaindb-${ch}`); if (el) el.textContent = `${db.toFixed(1)} dB`;
+      } catch (e) {
+        if (wsStatusEl) { wsStatusEl.textContent = `API error: gain CH${ch}`; wsStatusEl.style.color = '#ef476f'; }
+        showToast(`Misslyckades att sätta gain för CH${ch}`, 'error');
+        console.error('setGainDb failed', e);
+      }
     }
 
     /**
@@ -537,11 +534,15 @@
      * @param {boolean} on - Mute status (true for muted, false for unmuted)
      */
     async function setMute(ch, on) {
-      // Send POST request to mute API endpoint with mute status
-      await fetch(`/api/mute/${ch}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mute: on }) });
-      // Update mute button UI to reflect new status
-      const btn = document.getElementById(`mute-${ch}`);
-      if (btn) btn.classList.toggle('on', on);
+      try {
+        await window.BullenAPI.setMute(ch, on);
+        const btn = document.getElementById(`mute-${ch}`);
+        if (btn) btn.classList.toggle('on', on);
+      } catch (e) {
+        if (wsStatusEl) { wsStatusEl.textContent = `API error: mute CH${ch}`; wsStatusEl.style.color = '#ef476f'; }
+        showToast(`Misslyckades att muta CH${ch}`, 'error');
+        console.error('setMute failed', e);
+      }
     }
 
     /**
@@ -553,7 +554,11 @@
       selectedEl.textContent = ch;
       // Toggle selected class on channel buttons
       for (let i = 1; i <= N; i++) {
-        document.getElementById(`btn-${i}`).classList.toggle('sel', i === ch);
+        const btn = document.getElementById(`btn-${i}`);
+        if (!btn) continue;
+        const isSel = i === ch;
+        btn.classList.toggle('sel', isSel);
+        btn.setAttribute('aria-pressed', isSel ? 'true' : 'false');
       }
     }
 
@@ -598,6 +603,7 @@
         if (pk) pk.style.left = `${(normFromDb(pkDb) * 100).toFixed(1)}%`;
         // Update mute button status
         if (muteBtn) muteBtn.classList.toggle('on', !!mutes[idx]);
+        if (muteBtn) muteBtn.setAttribute('aria-pressed', !!mutes[idx] ? 'true' : 'false');
         // Update gain display label
         if (gainLabel) gainLabel.textContent = `${(gains_db[idx]).toFixed(1)} dB`;
         // Update gain slider position
@@ -609,50 +615,99 @@
      * Initialize application state by fetching current engine state
      */
     async function initState() {
-      // Fetch current engine state from API
-      const r = await fetch('/api/state');
-      // Parse JSON response
-      const s = await r.json();
-      // Update VU meters with initial state
-      updateVU(s);
+      try {
+        const s = await window.BullenAPI.getState();
+        updateVU(s);
+      } catch (e) {
+        if (wsStatusEl) { wsStatusEl.textContent = 'API error: state'; wsStatusEl.style.color = '#ef476f'; }
+        showToast('Kunde inte hämta systemstatus', 'error');
+        console.error('initState failed', e);
+      }
     }
 
     /**
      * Connect to WebSocket for VU meter updates
      */
     function wsConnect() {
-      // Determine WebSocket protocol based on page protocol
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      // Create WebSocket connection
-      const ws = new WebSocket(`${proto}://${location.host}/ws/vu`);
-      // Send ping message every 2 seconds to keep connection alive
-      let pingTimer = null;
-      ws.onopen = () => {
-        pingTimer = setInterval(() => { try { ws.send('ping'); } catch(e){} }, 2000);
-      };
-      // Handle incoming VU meter updates
-      ws.onmessage = (ev) => { 
-        try { 
-          const data = JSON.parse(ev.data); 
-          devOnWs(data);
-          updateVU(data); 
-          // Also update test view if visible
-          const testView = document.getElementById('testView');
-          if (testView && testView.style.display !== 'none') {
-            updateTestVU(data);
-          }
-        } catch(e){} 
-      };
-      // Reconnect if connection is closed
-      ws.onclose = () => {
-        if (pingTimer) { try { clearInterval(pingTimer); } catch(e){} }
-        setTimeout(wsConnect, 2000);
-      };
-      // Clear ping timer on error as well
-      ws.onerror = () => {
-        if (pingTimer) { try { clearInterval(pingTimer); } catch(e){} }
-      };
+      window.BullenWS.connect({
+        onStatus: (s) => {
+          if (!wsStatusEl) return;
+          if (s === 'connected') { wsStatusEl.textContent = 'WS: connected'; wsStatusEl.style.color = '#3ddc97'; }
+          else if (s === 'reconnecting') { wsStatusEl.textContent = 'WS: reconnecting…'; wsStatusEl.style.color = '#ffd166'; }
+          else if (s === 'error') { wsStatusEl.textContent = 'WS: error'; wsStatusEl.style.color = '#ef476f'; }
+        },
+        onMessage: (data) => {
+          try { if (typeof devOnWs === 'function') devOnWs(data); } catch(_){ }
+          scheduleVU(data);
+        }
+      });
     }
+
+    async function init() {
+      try {
+        CONFIG = await window.BullenAPI.getConfig();
+        N = CONFIG.inputs || 6;
+        buildUI(N);
+      } catch(e) {
+        buildUI(N);
+        if (wsStatusEl) { wsStatusEl.textContent = 'API error: config'; wsStatusEl.style.color = '#ef476f'; }
+        showToast('Kunde inte hämta konfiguration', 'error');
+        console.error('getConfig failed', e);
+      }
+      await initState();
+      wsConnect();
+      // Keyboard shortcuts: 1-6 select, m mute toggle, ArrowUp/Down adjust gain 1 dB
+      document.addEventListener('keydown', (e) => {
+        const tag = (e.target && e.target.tagName) || '';
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target && e.target.isContentEditable)) return;
+        // number keys 1..9
+        if (/^[1-9]$/.test(e.key)) {
+          const ch = parseInt(e.key, 10);
+          if (ch >= 1 && ch <= N) { selectChannel(ch); e.preventDefault(); }
+          return;
+        }
+        // mute toggle
+        if (e.key === 'm' || e.key === 'M') {
+          const ch = parseInt(selectedEl.textContent || '1', 10) || 1;
+          const btn = document.getElementById(`mute-${ch}`);
+          const on = !(btn && btn.classList.contains('on'));
+          setMute(ch, on);
+          e.preventDefault();
+          return;
+        }
+        // gain up/down 1 dB
+        if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+          const ch = parseInt(selectedEl.textContent || '1', 10) || 1;
+          const slider = document.getElementById(`gain-${ch}`);
+          if (slider) {
+            const step = 1;
+            const curr = parseFloat(slider.value);
+            let next = curr + (e.key === 'ArrowUp' ? step : -step);
+            next = Math.max(parseFloat(slider.min), Math.min(parseFloat(slider.max), next));
+            slider.value = String(next);
+            setGainDb(ch, next);
+            e.preventDefault();
+          }
+        }
+      });
+      // Developer Tools tabs keyboard navigation (ArrowLeft/ArrowRight)
+      const tablist = document.querySelector('.tabs[role="tablist"]');
+      if (tablist) {
+        const order = ['api','ws','seq','metrics'];
+        tablist.addEventListener('keydown', (e) => {
+          if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+          const currentId = (document.activeElement && document.activeElement.id) || 'tab-api';
+          const currKey = currentId.startsWith('tab-') ? currentId.slice(4) : 'api';
+          let idx = order.indexOf(currKey);
+          if (idx < 0) idx = 0;
+          idx = (e.key === 'ArrowRight') ? (idx + 1) % order.length : (idx - 1 + order.length) % order.length;
+          DevTools.setTab(order[idx]);
+          e.preventDefault();
+        });
+      }
+    }
+
+    window.BullenEntry = init;
 
     /**
      * Toggle between main view and settings view
@@ -713,7 +768,7 @@
         const systemInfoEl = document.getElementById('systemInfo');
         systemInfoEl.innerHTML = `
           <p><strong>Status:</strong> Ansluten och aktiv</p>
-          <p><strong>Kanaler:</strong> ${config.inputs || 6} ingångar, ${config.outputs || 2} utgångar</p>
+          <p><strong>Kanaler:</strong> ${config.inputs || 6} ingångar, ${config.outputs || 8} utgångar</p>
           <p><strong>Vald kanal:</strong> CH ${state.selected_channel || 1}</p>
           <p><strong>Inspelningar:</strong> ${config.recordings_dir || 'recordings'}/</p>
         `;
@@ -909,45 +964,6 @@
       peakMax: Array(N).fill(0),
     };
 
-    function devSetTab(key) {
-      const tabs = ['api','ws','seq','metrics'];
-      tabs.forEach(t => {
-        const btn = document.getElementById(`tab-${t}`);
-        const c = document.getElementById(`tabc-${t}`);
-        if (btn) btn.classList.toggle('active', t === key);
-        if (c) c.classList.toggle('active', t === key);
-      });
-    }
-
-    async function devSendApi() {
-      const method = document.getElementById('apiMethod').value;
-      const path = document.getElementById('apiPath').value.trim() || '/api/state';
-      const bodyText = document.getElementById('apiBody').value.trim();
-      const statusEl = document.getElementById('apiStatus');
-      const timeEl = document.getElementById('apiTime');
-      const respEl = document.getElementById('apiResponse');
-      let init = { method, headers: {} };
-      if (method === 'POST') {
-        init.headers['Content-Type'] = 'application/json';
-        try { init.body = bodyText ? JSON.stringify(JSON.parse(bodyText)) : '{}'; }
-        catch (e) { respEl.textContent = `Body JSON parse error: ${e}`; return; }
-      }
-      const t0 = performance.now();
-      try {
-        const r = await fetch(path, init);
-        const t1 = performance.now();
-        statusEl.value = `${r.status} ${r.statusText}`;
-        timeEl.value = (t1 - t0).toFixed(1);
-        let txt = await r.text();
-        try { const j = JSON.parse(txt); txt = JSON.stringify(j, null, 2); } catch (_) {}
-        respEl.textContent = txt;
-      } catch (e) {
-        statusEl.value = 'ERROR';
-        timeEl.value = '-';
-        respEl.textContent = String(e);
-      }
-    }
-
     function devFillApi(kind) {
       const method = document.getElementById('apiMethod');
       const path = document.getElementById('apiPath');
@@ -958,6 +974,8 @@
       if (kind === 'gaindb') { method.value = 'POST'; path.value = '/api/gain/1'; body.value = '{"gain_db": -6}'; }
       if (kind === 'mute') { method.value = 'POST'; path.value = '/api/mute/1'; body.value = '{"mute": true}'; }
     }
+
+    // dev tabs handled by DevTools.setTab()
 
     function devOnWs(payload) {
       const now = Date.now();

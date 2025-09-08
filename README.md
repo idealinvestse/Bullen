@@ -112,17 +112,33 @@ samplerate: 48000
 frames_per_period: 128
 nperiods: 2
 inputs: 6
-outputs: 2
+outputs: 8           # Audio Injector Octo standard
 record: true
 recordings_dir: recordings
+record_queue_size: 64 # per-kanals buffertar för inspelning (min 16)
 auto_connect_capture: true
 auto_connect_playback: true
-capture_match: capture
-playback_match: playback
+capture_match: audioinjector # default match för Octo; kan vara 'capture' på andra system
+playback_match: audioinjector
 selected_channel: 1
+log_level: INFO      # DEBUG/INFO/WARNING/ERROR
 ```
 
 - `capture_match`/`playback_match` används för att auto-ansluta fysiska porter (PipeWire/JACK). Justera vid behov.
+- `record_queue_size` balanserar minne mot robusthet vid hög last; 64 är en bra start.
+- `log_level` kan också styras via env `BULLEN_LOG_LEVEL`.
+
+### Logging
+
+- Loggnivå konfigureras via `log_level` i `config.yaml` eller env `BULLEN_LOG_LEVEL`.
+- Format: `%(asctime)s %(levelname)s [%(name)s] %(message)s`.
+- Realtidsvägen (JACK callback) loggar inte och gör ingen I/O.
+
+### Realtid & VU
+
+- RT-callback är konsekvent icke-blockerande och använder endast vektoriserad NumPy.
+- VU (peak/RMS) uppdateras i bakgrundstråd vid ~20 Hz. RT-callback gör endast lätt peak-tracking och RMS-ackumulering.
+- VU-telemetrin publiceras under en separat VU-låsning för att minimera konkurrens med RT-låsningen.
 
 ## UI
 

@@ -1,31 +1,37 @@
 import os
-from pathlib import Path
 import uvicorn
 import logging
 
 from app.config import load_config
 from app.server.app import create_app
-from app.engine.audio_engine import AudioEngine as _Engine
 
 
-def _ensure_raspberry_pi() -> None:
-    """Raise if not running on a Raspberry Pi (unless explicitly overridden)."""
-    # Allow override for development if explicitly requested
-    if os.environ.get("BULLEN_ALLOW_NON_PI") == "1":
+def _ensure_raspberry_pi():
+    """Ensure we're running on a Raspberry Pi (unless override set)."""
+    if os.environ.get("BULLEN_ALLOW_NON_PI"):
         return
-    model = ""
     try:
-        model = Path("/proc/device-tree/model").read_text(errors="ignore").lower()
-    except Exception:
-        model = ""
-    if "raspberry pi" not in model:
-        raise RuntimeError(
-            "Bullen is configured to run only on Raspberry Pi. "
-            "Set BULLEN_ALLOW_NON_PI=1 to override (for development only)."
-        )
+        with open("/proc/device-tree/model", "r") as f:
+            model = f.read().strip()
+        if "Raspberry Pi" not in model:
+            raise RuntimeError(f"Not a Raspberry Pi: {model}")
+    except FileNotFoundError:
+        raise RuntimeError("Not a Raspberry Pi: /proc/device-tree/model not found")
 
 
-# Build FastAPI app with JACK engine so uvicorn can import as 'app.server.main:app'
+def _create_engine(config):
+    """Create appropriate engine based on environment."""
+    if os.environ.get("BULLEN_ALLOW_NON_PI"):
+        # Use FakeEngine for non-Pi testing
+        from tests.conftest import FakeEngine
+        return FakeEngine(config.get("inputs", 6))
+    else:
+        # Use real AudioEngine on Pi
+        from app.engine.audio_engine import AudioEngine
+        return AudioEngine(config)
+
+
+# Load config once at module level
 _config = load_config()
 
 # Configure logging early (before creating engine/app)
@@ -35,7 +41,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
 )
 _ensure_raspberry_pi()
-engine = _Engine(_config)
+engine = _create_engine(_config)
 app = create_app(engine)
 
 
