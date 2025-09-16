@@ -1,5 +1,5 @@
 ---
-trigger: always_on
+trigger: model_decision
 ---
 
 # Windsurf Code Agent Guidelines – Bullen (RPi5 + Audio Injector Octo)
@@ -105,19 +105,5 @@ These guidelines are tailored for the current project state. Follow them when im
 - Requires approval (mutating):
   - `sudo apt install ...`, `sudo systemctl ...`, modifying `/boot/firmware/config.txt`
 
-## 13) Code review checklist (agent)
-- Audio callback remains non-blocking and vectorized.
-- Shared state mutations are protected by `self._lock`.
-- No busy loops; WS/VU publisher uses sleep/backoff.
-- Config keys documented; sensible defaults preserved.
-- UI updates consistent with API responses and channel count.
-
-## 14) Quick reference – endpoints
-- `GET /api/state` – current engine state
-- `POST /api/select/{1..6}` – select channel
-- `POST /api/gain/{1..6}` – body: `{gain_db: number}` or `{gain_linear: number}`
-- `POST /api/mute/{1..6}` – body: `{mute: boolean}`
-- `GET /api/config` – effective configuration
-- UI: `GET /ui/` – control panel
 
 Adhere strictly to these guidelines to maintain real-time safety, clarity, and reliability of the system.
