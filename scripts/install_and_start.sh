@@ -42,6 +42,7 @@ PROJ_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 VENV="$PROJ_DIR/.venv"
 REQUIREMENTS="$PROJ_DIR/requirements.txt"
 REQUIREMENTS_DUMMY="$PROJ_DIR/requirements-dummy.txt"
+REQUIREMENTS_DEV="$PROJ_DIR/requirements-dev.txt"
 DEFAULT_CONFIG="$PROJ_DIR/config.yaml"
 RECORDINGS_DIR="$PROJ_DIR/recordings"
 
@@ -128,14 +129,21 @@ create_venv() {
   # shellcheck disable=SC1091
   source "$VENV/bin/activate"
   python -m pip install --upgrade pip setuptools wheel
-  local req="$REQUIREMENTS"
+  # Choose base requirements based on backend (jack vs dummy)
+  local base_req="$REQUIREMENTS"
   if [[ "${BACKEND,,}" != "jack" && -f "$REQUIREMENTS_DUMMY" ]]; then
-    req="$REQUIREMENTS_DUMMY"
+    base_req="$REQUIREMENTS_DUMMY"
   fi
-  if [[ -f "$req" ]]; then
-    pip install -r "$req"
+  if [[ -f "$base_req" ]]; then
+    echo "[PIP] Installing base requirements from $base_req"
+    pip install -r "$base_req"
   else
-    echo "[WARN] Requirements file not found: $req"
+    echo "[WARN] Requirements file not found: $base_req"
+  fi
+  # Always install dev requirements if present (tests, tooling)
+  if [[ -f "$REQUIREMENTS_DEV" ]]; then
+    echo "[PIP] Installing development requirements from $REQUIREMENTS_DEV"
+    pip install -r "$REQUIREMENTS_DEV"
   fi
 }
 
@@ -260,7 +268,11 @@ start_jackd_alsa() {
   local dev="$JACK_DEVICE"
   if [[ -z "$dev" || "$dev" == "auto" ]]; then dev="$(pick_default_alsa_device)"; fi
   log_info "Starting jackd (ALSA) on $dev @ ${JACK_SR} Hz, frames ${JACK_FRAMES}, periods ${JACK_PERIODS}"
-  ulimit -l unlimited || true
+  # Try to set memory lock limits for better real-time performance, but continue if not permitted
+  if ! ulimit -l unlimited 2>/dev/null; then
+    log_warn "Unable to set unlimited locked memory. This may affect real-time audio performance."
+    log_warn "To fix this, either run with sudo privileges or modify /etc/security/limits.conf"
+  fi
   nohup jackd -R -P95 -d alsa -d "$dev" -r "$JACK_SR" -p "$JACK_FRAMES" -n "$JACK_PERIODS" >/tmp/jackd.log 2>&1 &
   sleep 0.5
   if wait_for_jack 20 0.5; then return 0; fi
