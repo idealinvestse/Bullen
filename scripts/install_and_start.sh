@@ -268,12 +268,27 @@ start_jackd_alsa() {
   local dev="$JACK_DEVICE"
   if [[ -z "$dev" || "$dev" == "auto" ]]; then dev="$(pick_default_alsa_device)"; fi
   log_info "Starting jackd (ALSA) on $dev @ ${JACK_SR} Hz, frames ${JACK_FRAMES}, periods ${JACK_PERIODS}"
+  
+  # Check if we can set real-time priority
+  local rt_flags="-P95"
+  if ! chrt -r -p 95 $$ >/dev/null 2>&1; then
+    log_warn "Unable to set real-time priority. Starting JACK without RT."
+    rt_flags=""
+  fi
+  
   # Try to set memory lock limits for better real-time performance, but continue if not permitted
   if ! ulimit -l unlimited 2>/dev/null; then
     log_warn "Unable to set unlimited locked memory. This may affect real-time audio performance."
     log_warn "To fix this, either run with sudo privileges or modify /etc/security/limits.conf"
   fi
-  nohup jackd -R -P95 -d alsa -d "$dev" -r "$JACK_SR" -p "$JACK_FRAMES" -n "$JACK_PERIODS" >/tmp/jackd.log 2>&1 &
+  
+  # Start JACK with or without real-time priority
+  if [[ -n "$rt_flags" ]]; then
+    nohup jackd -R $rt_flags -d alsa -d "$dev" -r "$JACK_SR" -p "$JACK_FRAMES" -n "$JACK_PERIODS" >/tmp/jackd.log 2>&1 &
+  else
+    nohup jackd -R -d alsa -d "$dev" -r "$JACK_SR" -p "$JACK_FRAMES" -n "$JACK_PERIODS" >/tmp/jackd.log 2>&1 &
+  fi
+  
   sleep 0.5
   if wait_for_jack 20 0.5; then return 0; fi
   log_warn "jackd ALSA failed to come up; see /tmp/jackd.log"
@@ -296,7 +311,21 @@ start_jackdbus() {
 
 start_jackd_dummy() {
   log_warn "Starting jackd with dummy backend as last resort"
-  nohup jackd -R -P95 -d dummy -r "$JACK_SR" -p "$JACK_FRAMES" -n "$JACK_PERIODS" >/tmp/jackd.log 2>&1 &
+  
+  # Check if we can set real-time priority
+  local rt_flags="-P95"
+  if ! chrt -r -p 95 $$ >/dev/null 2>&1; then
+    log_warn "Unable to set real-time priority. Starting JACK dummy without RT."
+    rt_flags=""
+  fi
+  
+  # Start JACK with or without real-time priority
+  if [[ -n "$rt_flags" ]]; then
+    nohup jackd -R $rt_flags -d dummy -r "$JACK_SR" -p "$JACK_FRAMES" -n "$JACK_PERIODS" >/tmp/jackd.log 2>&1 &
+  else
+    nohup jackd -R -d dummy -r "$JACK_SR" -p "$JACK_FRAMES" -n "$JACK_PERIODS" >/tmp/jackd.log 2>&1 &
+  fi
+  
   sleep 0.5
   if wait_for_jack 10 0.5; then return 0; fi
   return 1

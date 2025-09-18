@@ -87,21 +87,23 @@ sudo systemctl status bullen.service
 
 ## Rättigheter (realtid)
 
-Aktivera RT-prioritet och memlock:
+För optimal ljudprestanda bör du aktivera realtidsschemaläggning:
 
-```conf
-# /etc/security/limits.d/audio.conf
-@audio - rtprio 95
-@audio - memlock unlimited
+1. **Skapa en limits-fil**:
+
+```bash
+sudo cp config/limits.conf /etc/security/limits.d/bullen.conf
 ```
 
-Lägg användaren i gruppen `audio`:
+2. **Lägg till användaren i ljudgruppen**:
 
 ```bash
 sudo usermod -aG audio $USER
 ```
 
-Logga ut/in.
+3. **Starta om systemet** för att tillämpa ändringarna.
+
+Om realtidsrättigheter inte kan tillämpas kommer systemet att fortsätta fungera men med potentiellt högre latens och risk för ljudavbrott.
 
 ## Konfiguration
 

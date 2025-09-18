@@ -17,6 +17,8 @@ RestartSec=3
 # Allow RT priority and memlock if limits are configured
 LimitRTPRIO=95
 LimitMEMLOCK=infinity
+# Real-time scheduling permissions
+LimitRTTIME=infinity
 
 [Install]
 WantedBy=multi-user.target
