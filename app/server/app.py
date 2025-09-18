@@ -83,6 +83,138 @@ def create_app(engine: Any) -> FastAPI:
         """
         # Return engine state as JSON
         return JSONResponse(engine.get_state())
+    
+    # -------- Matrix Routing API --------
+    
+    @app.post("/api/matrix/route")
+    def set_matrix_route(payload: Dict[str, Any]):
+        """
+        Set or update a routing connection in the matrix.
+        
+        Args:
+            payload: {input: int, output: int, gain?: float, enable?: bool}
+        
+        Returns:
+            Dict: Success response
+        """
+        input_ch = payload.get('input')
+        output_ch = payload.get('output')
+        
+        if input_ch is None or output_ch is None:
+            raise HTTPException(status_code=400, detail="Expected 'input' and 'output'")
+        
+        # Validate channels
+        if not 0 <= input_ch < engine.num_inputs:
+            raise HTTPException(status_code=400, detail=f"Input out of range (0..{engine.num_inputs-1})")
+        if not 0 <= output_ch < engine.num_outputs:
+            raise HTTPException(status_code=400, detail=f"Output out of range (0..{engine.num_outputs-1})")
+        
+        # Get gain and enable status
+        gain = payload.get('gain', 1.0)
+        enable = payload.get('enable', True)
+        
+        # Set routing in engine if it supports matrix routing
+        if hasattr(engine, 'set_route'):
+            if enable:
+                engine.set_route(input_ch, output_ch, gain)
+            else:
+                engine.clear_route(input_ch, output_ch)
+        else:
+            # Fallback for old engine - use select API
+            if enable and input_ch != getattr(engine, 'selected_ch', -1):
+                engine.set_selected_channel(input_ch)
+        
+        return {"ok": True, "input": input_ch, "output": output_ch, "gain": gain, "enabled": enable}
+    
+    @app.get("/api/matrix/routes")
+    def get_matrix_routes():
+        """
+        Get all current routing connections.
+        
+        Returns:
+            Dict: Current routing matrix
+        """
+        if hasattr(engine, 'get_routes'):
+            routes = engine.get_routes()
+            # Convert to list format
+            route_list = [
+                {"input": i, "output": o, "gain": g}
+                for (i, o), g in routes.items()
+            ]
+            return {"routes": route_list}
+        else:
+            # Fallback for old engine
+            selected = getattr(engine, 'selected_ch', 0)
+            routes = []
+            for output in range(engine.num_outputs):
+                routes.append({
+                    "input": selected,
+                    "output": output,
+                    "gain": 1.0
+                })
+            return {"routes": routes}
+    
+    @app.post("/api/matrix/clear")
+    def clear_matrix_routes():
+        """
+        Clear all routing connections.
+        
+        Returns:
+            Dict: Success response
+        """
+        if hasattr(engine, 'clear_all_routes'):
+            engine.clear_all_routes()
+        return {"ok": True}
+    
+    @app.post("/api/matrix/preset")
+    def load_matrix_preset(payload: Dict[str, Any]):
+        """
+        Load a routing preset.
+        
+        Args:
+            payload: {preset: str} or {routes: list}
+        
+        Returns:
+            Dict: Success response
+        """
+        if 'preset' in payload:
+            preset_name = payload['preset']
+            # Predefined presets
+            if preset_name == 'stereo':
+                # Route all inputs to stereo outputs
+                if hasattr(engine, 'clear_all_routes'):
+                    engine.clear_all_routes()
+                    for i in range(engine.num_inputs):
+                        engine.set_route(i, 0, 1.0)  # Left
+                        engine.set_route(i, 1, 1.0)  # Right
+            elif preset_name == 'mono':
+                # Route first input to all outputs
+                if hasattr(engine, 'clear_all_routes'):
+                    engine.clear_all_routes()
+                    for o in range(engine.num_outputs):
+                        engine.set_route(0, o, 1.0)
+            elif preset_name == 'surround':
+                # 5.1 surround routing
+                if hasattr(engine, 'clear_all_routes'):
+                    engine.clear_all_routes()
+                    # Map inputs to surround outputs
+                    routing_map = [
+                        (0, 0),  # Input 1 -> Front Left
+                        (1, 1),  # Input 2 -> Front Right
+                        (2, 2),  # Input 3 -> Center
+                        (3, 3),  # Input 4 -> LFE
+                        (4, 4),  # Input 5 -> Surround Left
+                        (5, 5),  # Input 6 -> Surround Right
+                    ]
+                    for inp, out in routing_map:
+                        if inp < engine.num_inputs and out < engine.num_outputs:
+                            engine.set_route(inp, out, 1.0)
+        elif 'routes' in payload:
+            # Custom routing
+            if hasattr(engine, 'load_routing_preset'):
+                engine.load_routing_preset(payload)
+        
+        return {"ok": True}
 
     @app.post("/api/select/{ch}")
     def select_channel(ch: int):

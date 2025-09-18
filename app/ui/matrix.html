@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bullen Audio Matrix Router</title>
+    <link rel="stylesheet" href="matrix.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>BULLEN AUDIO MATRIX</h1>
+            <div class="status-indicators">
+                <div class="status-indicator">
+                    <div class="status-dot" id="connectionStatus"></div>
+                    <span>Ansluten</span>
+                </div>
+                <div class="status-indicator">
+                    <div class="status-dot" id="jackStatus"></div>
+                    <span>JACK</span>
+                </div>
+                <div class="status-indicator">
+                    <span id="sampleRate">48 kHz</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Settings Toggle -->
+        <div class="settings-toggle" onclick="toggleSettings()">
+            ⚙️
+        </div>
+
+        <!-- Main Grid Layout -->
+        <div class="main-grid">
+            <!-- Input Channels -->
+            <div class="input-channels" id="inputChannels">
+                <!-- Will be dynamically generated -->
+            </div>
+
+            <!-- Output Channels -->
+            <div class="output-channels" id="outputChannels">
+                <!-- Will be dynamically generated -->
+            </div>
+
+            <!-- Routing Matrix -->
+            <div class="routing-matrix">
+                <h3 style="margin-bottom: 15px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px;">Routing Matrix</h3>
+                <div class="matrix-grid" id="matrixGrid">
+                    <!-- Will be dynamically generated -->
+                </div>
+                <div style="margin-top: 20px; display: flex; gap: 20px; flex-wrap: wrap;">
+                    <button class="control-btn" onclick="clearAllRoutes()">Rensa alla</button>
+                    <button class="control-btn" onclick="toggleAutoDetect()" id="autoDetectBtn">Auto-detect AV</button>
+                    <button class="control-btn" onclick="savePreset()">Spara preset</button>
+                    <button class="control-btn" onclick="loadPreset()">Ladda preset</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div class="settings-panel" id="settingsPanel">
+        <h2 style="margin-bottom: 20px;">Inställningar</h2>
+        <div style="margin-bottom: 20px;">
+            <h3 style="font-size: 14px; margin-bottom: 10px;">Automatisk ljuddetektering</h3>
+            <label style="display: flex; align-items: center; gap: 10px;">
+                <input type="checkbox" id="autoDetectEnabled"> Aktiverad
+            </label>
+            <label style="display: flex; align-items: center; gap: 10px; margin-top: 10px;">
+                <span>Tröskelvärde (dB):</span>
+                <input type="range" min="-60" max="0" value="-30" id="autoDetectThreshold" style="flex: 1;">
+                <span id="thresholdValue">-30 dB</span>
+            </label>
+        </div>
+        <div style="margin-bottom: 20px;">
+            <h3 style="font-size: 14px; margin-bottom: 10px;">VU-mätare</h3>
+            <label style="display: flex; align-items: center; gap: 10px;">
+                <input type="checkbox" id="showPeakHold" checked> Visa peak hold
+            </label>
+            <label style="display: flex; align-items: center; gap: 10px; margin-top: 10px;">
+                <span>Uppdateringsfrekvens:</span>
+                <select id="updateRate">
+                    <option value="50">20 Hz</option>
+                    <option value="33">30 Hz</option>
+                    <option value="16">60 Hz</option>
+                </select>
+            </label>
+        </div>
+        <div style="margin-bottom: 20px;">
+            <h3 style="font-size: 14px; margin-bottom: 10px;">Presets</h3>
+            <select id="presetSelect" style="width: 100%; padding: 8px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: white; border-radius: 4px;">
+                <option value="">Välj preset...</option>
+                <option value="stereo">Stereo Mix</option>
+                <option value="mono">Mono till alla</option>
+                <option value="surround">5.1 Surround</option>
+            </select>
+        </div>
+    </div>
+
+    <script src="matrix.js"></script>
+</body>
+</html>
