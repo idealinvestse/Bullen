@@ -5,3 +5,4 @@ soundfile>=0.12
 PyYAML>=6.0
 JACK-Client>=0.5.4
 requests>=2.28
+python-multipart>=0.0.6
